@@ -333,7 +333,7 @@ describe("acpNotificationHandler", () => {
     ]);
   });
 
-  it("preserves live text annotations and splits chunks when audience changes", async () => {
+  it("drops assistant-only live text chunks while preserving visible annotations", async () => {
     registerSession("draft-session-5", "goose-session-5", "goose", "/tmp");
 
     await handleSessionNotification({
@@ -358,9 +358,9 @@ describe("acpNotificationHandler", () => {
         messageId: "message-1",
         content: {
           type: "text",
-          text: "prompt",
+          text: "Visible ",
           annotations: {
-            audience: ["assistant"],
+            audience: ["user"],
           },
         },
       },
@@ -373,7 +373,10 @@ describe("acpNotificationHandler", () => {
         messageId: "message-1",
         content: {
           type: "text",
-          text: "Visible reply",
+          text: "reply",
+          annotations: {
+            audience: ["user"],
+          },
         },
       },
     } as SessionNotification);
@@ -384,19 +387,15 @@ describe("acpNotificationHandler", () => {
     ).toEqual([
       {
         type: "text",
-        text: "internal prompt",
-        annotations: {
-          audience: ["assistant"],
-        },
-      },
-      {
-        type: "text",
         text: "Visible reply",
+        annotations: {
+          audience: ["user"],
+        },
       },
     ]);
   });
 
-  it("preserves replay text annotations on user message chunks", async () => {
+  it("drops assistant-only replay text chunks while preserving visible annotations", async () => {
     registerSession("draft-session-6", "goose-session-6", "goose", "/tmp");
     useChatStore.setState({
       loadingSessionIds: new Set(["draft-session-6"]),
@@ -424,7 +423,25 @@ describe("acpNotificationHandler", () => {
         messageId: "message-1",
         content: {
           type: "text",
-          text: "Visible prompt",
+          text: "Visible ",
+          annotations: {
+            audience: ["user"],
+          },
+        },
+      },
+    } as SessionNotification);
+
+    await handleSessionNotification({
+      sessionId: "goose-session-6",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "message-1",
+        content: {
+          type: "text",
+          text: "prompt",
+          annotations: {
+            audience: ["user"],
+          },
         },
       },
     } as SessionNotification);
@@ -433,14 +450,10 @@ describe("acpNotificationHandler", () => {
     expect(buffer?.[0]?.content).toEqual([
       {
         type: "text",
-        text: "internal prompt",
-        annotations: {
-          audience: ["assistant"],
-        },
-      },
-      {
-        type: "text",
         text: "Visible prompt",
+        annotations: {
+          audience: ["user"],
+        },
       },
     ]);
   });

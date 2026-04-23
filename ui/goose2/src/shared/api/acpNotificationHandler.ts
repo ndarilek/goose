@@ -29,6 +29,7 @@ import {
 } from "./toolCallBlockBuilders";
 import {
   appendTextContent,
+  isUserVisibleTextAnnotations,
   normalizeTextAnnotations,
 } from "./textContentBlocks";
 
@@ -180,61 +181,69 @@ export function clearReplayPerf(sessionId: string): void {
 function handleReplay(sessionId: string, update: SessionUpdate): void {
   switch (update.sessionUpdate) {
     case "agent_message_chunk": {
-      const messageId = update.messageId ?? crypto.randomUUID();
-      const buffer = ensureReplayBuffer(sessionId);
-      if (!getBufferedMessage(sessionId, messageId)) {
-        buffer.push({
-          id: messageId,
-          role: "assistant",
-          created: Date.now(),
-          content: [],
-          metadata: {
-            userVisible: true,
-            agentVisible: true,
-            completionStatus: "inProgress",
-          },
-        });
-      }
-      const msg = getBufferedMessage(sessionId, messageId);
-      if (msg && update.content.type === "text" && "text" in update.content) {
+      if (update.content.type === "text" && "text" in update.content) {
+        const annotations = normalizeTextAnnotations(
+          update.content.annotations,
+        );
+        if (!isUserVisibleTextAnnotations(annotations)) {
+          break;
+        }
+
+        const messageId = update.messageId ?? crypto.randomUUID();
+        const buffer = ensureReplayBuffer(sessionId);
+        if (!getBufferedMessage(sessionId, messageId)) {
+          buffer.push({
+            id: messageId,
+            role: "assistant",
+            created: Date.now(),
+            content: [],
+            metadata: {
+              userVisible: true,
+              agentVisible: true,
+              completionStatus: "inProgress",
+            },
+          });
+        }
+        const msg = getBufferedMessage(sessionId, messageId);
+        if (!msg) {
+          break;
+        }
         msg.content = appendTextContent(
           msg.content,
           update.content.text,
-          normalizeTextAnnotations(update.content.annotations),
+          annotations,
         );
       }
       break;
     }
 
     case "user_message_chunk": {
-      const messageId = update.messageId ?? crypto.randomUUID();
-      const buffer = ensureReplayBuffer(sessionId);
-      const existing = getBufferedMessage(sessionId, messageId);
-      if (
-        !existing &&
-        update.content.type === "text" &&
-        "text" in update.content
-      ) {
+      if (update.content.type === "text" && "text" in update.content) {
         const annotations = normalizeTextAnnotations(
           update.content.annotations,
         );
-        buffer.push({
-          id: messageId,
-          role: "user",
-          created: Date.now(),
-          content: [{ type: "text", text: update.content.text, annotations }],
-          metadata: { userVisible: true, agentVisible: true },
-        });
-      } else if (
-        existing &&
-        update.content.type === "text" &&
-        "text" in update.content
-      ) {
-        existing.content = appendTextContent(
-          existing.content,
-          update.content.text,
-          normalizeTextAnnotations(update.content.annotations),
-        );
+        if (!isUserVisibleTextAnnotations(annotations)) {
+          break;
+        }
+
+        const messageId = update.messageId ?? crypto.randomUUID();
+        const buffer = ensureReplayBuffer(sessionId);
+        const existing = getBufferedMessage(sessionId, messageId);
+        if (!existing) {
+          buffer.push({
+            id: messageId,
+            role: "user",
+            created: Date.now(),
+            content: [{ type: "text", text: update.content.text, annotations }],
+            metadata: { userVisible: true, agentVisible: true },
+          });
+        } else {
+          existing.content = appendTextContent(
+            existing.content,
+            update.content.text,
+            annotations,
+          );
+        }
       }
       break;
     }
@@ -299,35 +308,39 @@ function handleLive(
 
   switch (update.sessionUpdate) {
     case "agent_message_chunk": {
-      const messageId =
-        update.messageId ??
-        presetMessageIds.get(gooseSessionId) ??
-        crypto.randomUUID();
-      const existing = store.messagesBySession[sessionId]?.find(
-        (m) => m.id === messageId,
-      );
-
-      if (!existing) {
-        store.addMessage(sessionId, {
-          id: messageId,
-          role: "assistant",
-          created: Date.now(),
-          content: [],
-          metadata: {
-            userVisible: true,
-            agentVisible: true,
-            completionStatus: "inProgress",
-          },
-        });
-        store.setPendingAssistantProvider(sessionId, null);
-        store.setStreamingMessageId(sessionId, messageId);
-      }
-
       if (update.content.type === "text" && "text" in update.content) {
-        const text = update.content.text;
         const annotations = normalizeTextAnnotations(
           update.content.annotations,
         );
+        if (!isUserVisibleTextAnnotations(annotations)) {
+          break;
+        }
+
+        const messageId =
+          update.messageId ??
+          presetMessageIds.get(gooseSessionId) ??
+          crypto.randomUUID();
+        const existing = store.messagesBySession[sessionId]?.find(
+          (m) => m.id === messageId,
+        );
+
+        if (!existing) {
+          store.addMessage(sessionId, {
+            id: messageId,
+            role: "assistant",
+            created: Date.now(),
+            content: [],
+            metadata: {
+              userVisible: true,
+              agentVisible: true,
+              completionStatus: "inProgress",
+            },
+          });
+          store.setPendingAssistantProvider(sessionId, null);
+          store.setStreamingMessageId(sessionId, messageId);
+        }
+
+        const text = update.content.text;
         store.setStreamingMessageId(sessionId, messageId);
         store.updateMessage(sessionId, messageId, (msg) => ({
           ...msg,

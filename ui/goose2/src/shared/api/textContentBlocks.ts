@@ -24,6 +24,13 @@ export function normalizeTextAnnotations(
     : undefined;
 }
 
+export function isUserVisibleTextAnnotations(
+  annotations?: ContentAnnotations,
+): boolean {
+  const audience = annotations?.audience;
+  return !audience || audience.length === 0 || audience.includes("user");
+}
+
 function sameTextAnnotations(
   left?: ContentAnnotations,
   right?: ContentAnnotations,
