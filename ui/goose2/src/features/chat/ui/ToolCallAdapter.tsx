@@ -125,18 +125,25 @@ function InputSummary({
 
 function ToolLocations({ locations }: { locations: ToolCallLocation[] }) {
   const { t } = useTranslation("chat");
-  const { pathExists, openResolvedPath } = useArtifactPolicyContext();
+  const { pathExists, openResolvedPath, resolveMarkdownHref } =
+    useArtifactPolicyContext();
   const [openError, setOpenError] = useState<string | null>(null);
 
   const openLocation = async (path: string) => {
     try {
       setOpenError(null);
-      const exists = await pathExists(path);
-      if (!exists) {
-        setOpenError(t("tools.fileNotFound", { path }));
+      const candidate = resolveMarkdownHref(path);
+      if (!candidate?.allowed) {
+        setOpenError(candidate?.blockedReason || t("tools.pathOutsideRoots"));
         return;
       }
-      await openResolvedPath(path);
+
+      const exists = await pathExists(candidate.resolvedPath);
+      if (!exists) {
+        setOpenError(t("tools.fileNotFound", { path: candidate.resolvedPath }));
+        return;
+      }
+      await openResolvedPath(candidate.resolvedPath);
     } catch (error) {
       setOpenError(error instanceof Error ? error.message : String(error));
     }
@@ -145,19 +152,24 @@ function ToolLocations({ locations }: { locations: ToolCallLocation[] }) {
   return (
     <ToolSection label="Files">
       <div className="flex flex-wrap gap-1.5">
-        {locations.map((location) => (
-          <Button
-            key={`${location.path}:${location.line ?? ""}`}
-            type="button"
-            variant="outline-flat"
-            onClick={() => void openLocation(location.path)}
-            className="inline-flex h-auto max-w-full items-center justify-start rounded-full px-2.5 py-1 text-xs"
-            title={getToolLocationSubtitle(location)}
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{getToolLocationTitle(location)}</span>
-          </Button>
-        ))}
+        {locations.map((location) => {
+          const candidate = resolveMarkdownHref(location.path);
+
+          return (
+            <Button
+              key={`${location.path}:${location.line ?? ""}`}
+              type="button"
+              variant="outline-flat"
+              onClick={() => void openLocation(location.path)}
+              className="inline-flex h-auto max-w-full items-center justify-start rounded-full px-2.5 py-1 text-xs"
+              title={getToolLocationSubtitle(location)}
+              disabled={!candidate?.allowed}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{getToolLocationTitle(location)}</span>
+            </Button>
+          );
+        })}
       </div>
       {openError ? (
         <p className="text-[11px] text-destructive">{openError}</p>
@@ -371,7 +383,7 @@ export function ToolCallAdapter({
     locations: visibleLocations,
     arguments: args,
   });
-  const { openResolvedPath } = useArtifactPolicyContext();
+  const { openResolvedPath, resolveMarkdownHref } = useArtifactPolicyContext();
   const rawResult =
     result ??
     (typeof rawOutput === "string"
@@ -389,7 +401,13 @@ export function ToolCallAdapter({
     headerFileLabel && headerFilePath
       ? splitHeaderTitle(name, headerFileLabel)
       : null;
-  const canOpenHeaderFile = Boolean(headerFilePath && headerTitleParts);
+  const headerFileCandidate = useMemo(
+    () => (headerFilePath ? resolveMarkdownHref(headerFilePath) : null),
+    [headerFilePath, resolveMarkdownHref],
+  );
+  const canOpenHeaderFile = Boolean(
+    headerTitleParts && headerFileCandidate?.allowed,
+  );
 
   return (
     <div className={cn(fitWidth && "inline-flex max-w-full flex-col")}>
@@ -405,25 +423,31 @@ export function ToolCallAdapter({
             headerTitleParts ? (
               <>
                 <span data-tool-title-prefix>{headerTitleParts.prefix}</span>
-                <button
-                  type="button"
-                  data-clickable-file
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!headerFilePath) {
-                      return;
-                    }
-                    void openResolvedPath(headerFilePath).catch(() => {});
-                  }}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  title={headerFilePath}
-                  aria-label={`Open ${headerTitleParts.fileLabel}`}
-                  className="inline truncate text-foreground underline-offset-2 hover:underline"
-                >
-                  {headerTitleParts.fileLabel}
-                </button>
+                {canOpenHeaderFile ? (
+                  <button
+                    type="button"
+                    data-clickable-file
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!headerFileCandidate?.allowed) {
+                        return;
+                      }
+                      void openResolvedPath(
+                        headerFileCandidate.resolvedPath,
+                      ).catch(() => {});
+                    }}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                    title={headerFileCandidate?.resolvedPath ?? headerFilePath}
+                    aria-label={`Open ${headerTitleParts.fileLabel}`}
+                    className="inline truncate text-foreground underline-offset-2 hover:underline"
+                  >
+                    {headerTitleParts.fileLabel}
+                  </button>
+                ) : (
+                  <span>{headerTitleParts.fileLabel}</span>
+                )}
                 <span>{headerTitleParts.suffix}</span>
               </>
             ) : (

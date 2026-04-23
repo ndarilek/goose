@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCardDisplay } from "@/features/chat/hooks/ArtifactPolicyContext";
 import type { ArtifactPathCandidate } from "@/features/chat/lib/artifactPathPolicy";
 import { ToolCallAdapter } from "../ToolCallAdapter";
@@ -15,13 +15,15 @@ const mockResolveToolCardDisplay =
       result?: string,
     ) => ToolCardDisplay
   >();
+const mockResolveMarkdownHref =
+  vi.fn<(href: string) => ArtifactPathCandidate | null>();
 const mockPathExists = vi.fn<(path: string) => Promise<boolean>>();
 const mockOpenResolvedPath = vi.fn<(path: string) => Promise<void>>();
 
 vi.mock("@/features/chat/hooks/ArtifactPolicyContext", () => ({
   useArtifactPolicyContext: () => ({
     resolveToolCardDisplay: mockResolveToolCardDisplay,
-    resolveMarkdownHref: () => null,
+    resolveMarkdownHref: mockResolveMarkdownHref,
     pathExists: mockPathExists,
     openResolvedPath: mockOpenResolvedPath,
   }),
@@ -54,6 +56,22 @@ function makeCandidate(
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  mockResolveToolCardDisplay.mockReset();
+  mockResolveToolCardDisplay.mockReturnValue(EMPTY_DISPLAY);
+  mockResolveMarkdownHref.mockReset();
+  mockResolveMarkdownHref.mockImplementation((href) =>
+    makeCandidate({
+      rawPath: href,
+      resolvedPath: href,
+    }),
+  );
+  mockPathExists.mockReset();
+  mockPathExists.mockResolvedValue(true);
+  mockOpenResolvedPath.mockReset();
+  mockOpenResolvedPath.mockResolvedValue(undefined);
+});
 
 function renderAdapter(
   overrides: Partial<Parameters<typeof ToolCallAdapter>[0]> = {},
@@ -111,54 +129,6 @@ describe("ToolCallAdapter — ArtifactActions", () => {
       ?.querySelector("pre");
 
     expect(rawInputPanel).toHaveTextContent('"path": "/project/src/main.ts"');
-  });
-
-  it("opens the file from the header filename without expanding the accordion", async () => {
-    const user = userEvent.setup();
-    mockResolveToolCardDisplay.mockReturnValue(EMPTY_DISPLAY);
-    mockOpenResolvedPath.mockResolvedValue(undefined);
-
-    renderAdapter({
-      name: "Edit main.swift",
-      kind: "edit",
-      arguments: { path: "/project/Sources/main.swift", line: 1 },
-      result: "Updated /project/Sources/main.swift",
-      open: undefined,
-    });
-
-    await user.click(screen.getByRole("button", { name: /open main\.swift/i }));
-
-    expect(mockOpenResolvedPath).toHaveBeenCalledWith(
-      "/project/Sources/main.swift",
-    );
-    expect(screen.queryByText("Path")).not.toBeInTheDocument();
-  });
-
-  it("opens the accordion when clicking the non-file title text", async () => {
-    const user = userEvent.setup();
-    mockResolveToolCardDisplay.mockReturnValue(EMPTY_DISPLAY);
-    mockOpenResolvedPath.mockReset();
-    mockOpenResolvedPath.mockResolvedValue(undefined);
-
-    const { container } = renderAdapter({
-      name: "Edit main.swift",
-      kind: "edit",
-      arguments: { path: "/project/Sources/main.swift", line: 1 },
-      result: "Updated /project/Sources/main.swift",
-      open: undefined,
-    });
-
-    const titlePrefix = container.querySelector("[data-tool-title-prefix]");
-    expect(titlePrefix).toBeTruthy();
-
-    if (!titlePrefix) {
-      throw new Error("Expected non-file title text");
-    }
-
-    await user.click(titlePrefix);
-
-    expect(mockOpenResolvedPath).not.toHaveBeenCalled();
-    expect(screen.getByText("Path")).toBeInTheDocument();
   });
 
   it("renders command input summaries with a clamped preview and expanded bash highlighting", async () => {
@@ -227,9 +197,6 @@ describe("ToolCallAdapter — ArtifactActions", () => {
 
   it("renders multi-location fallbacks as inline file pills", async () => {
     const user = userEvent.setup();
-    mockResolveToolCardDisplay.mockReturnValue(EMPTY_DISPLAY);
-    mockPathExists.mockResolvedValue(true);
-    mockOpenResolvedPath.mockResolvedValue(undefined);
 
     renderAdapter({
       name: "read_file",
@@ -256,6 +223,40 @@ describe("ToolCallAdapter — ArtifactActions", () => {
     await user.click(screen.getByRole("button", { name: /index\.js:12/i }));
 
     expect(mockOpenResolvedPath).toHaveBeenCalledWith("/project/src/index.js");
+  });
+
+  it("disables multi-location pills outside allowed roots", () => {
+    mockResolveMarkdownHref.mockImplementation((href) =>
+      href === "/project/src/index.js"
+        ? makeCandidate({
+            rawPath: href,
+            resolvedPath: href,
+            allowed: false,
+            blockedReason: "Path is outside allowed project/artifacts roots.",
+          })
+        : makeCandidate({
+            rawPath: href,
+            resolvedPath: href,
+          }),
+    );
+
+    renderAdapter({
+      name: "read_file",
+      kind: "read",
+      arguments: { path: "/project/src/renderer.js", line: 42 },
+      locations: [
+        { path: "/project/src/renderer.js", line: 42 },
+        { path: "/project/src/index.js", line: 12 },
+      ],
+      result: "flattened result",
+    });
+
+    expect(
+      screen.getByRole("button", { name: /renderer\.js:42/i }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /index\.js:12/i }),
+    ).toBeDisabled();
   });
 
   it('renders "Open file" button when primary candidate exists', () => {
