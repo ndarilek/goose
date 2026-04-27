@@ -15,6 +15,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { Button, buttonVariants } from "@/shared/ui/button";
 import { useSetTopBarActions } from "@/app/contexts/TopBarActionsContext";
+import { BottomFade } from "@/shared/ui/BottomFade";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -391,23 +392,7 @@ export function SkillsView() {
           )}
         </div>
 
-        {/* Bottom fade — gradient mask makes the blur itself ramp in
-            so cards near the top of the fade region stay clean and
-            blur progressively as content approaches the composer */}
-        <div
-          className="pointer-events-none sticky bottom-0 left-0 h-64 w-full"
-          style={{
-            background:
-              "linear-gradient(to bottom, rgba(222,222,222,0) 0%, var(--canvas) 100%)",
-            backdropFilter: "blur(3px)",
-            WebkitBackdropFilter: "blur(3px)",
-            maskImage:
-              "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.4) 50%, black 100%)",
-            WebkitMaskImage:
-              "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.4) 50%, black 100%)",
-          }}
-          aria-hidden="true"
-        />
+        <BottomFade />
       </div>
 
       {/* Hidden file input for drag-and-drop import */}

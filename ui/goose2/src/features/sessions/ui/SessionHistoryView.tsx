@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { History, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { getDisplaySessionTitle } from "@/features/chat/lib/sessionTitle";
 import { SearchBar } from "@/shared/ui/SearchBar";
+import { BottomFade } from "@/shared/ui/BottomFade";
 import { Button } from "@/shared/ui/button";
+import { useSetTopBarActions } from "@/app/contexts/TopBarActionsContext";
 import { SessionCard } from "./SessionCard";
 import { groupSessionsByDate } from "../lib/groupSessionsByDate";
 import { useAgentStore } from "@/features/agents/stores/agentStore";
@@ -172,6 +174,28 @@ export function SessionHistoryView({
     [loadSessions],
   );
 
+  const setTopBarActions = useSetTopBarActions();
+  const handleTriggerImport = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  useEffect(() => {
+    const pillCls =
+      "h-8 rounded-full bg-[var(--surface-button)] px-3 text-[14px] text-black/70 hover:bg-[var(--surface-button)]/80";
+    setTopBarActions(
+      <Button
+        type="button"
+        variant="ghost"
+        className={pillCls}
+        onClick={handleTriggerImport}
+      >
+        <Upload className="mr-2 size-4" />
+        {t("common:actions.import")}
+      </Button>,
+    );
+    return () => setTopBarActions(null);
+  }, [setTopBarActions, t, handleTriggerImport]);
+
   const handleSelectResult = useCallback(
     (sessionId: string, messageId?: string) => {
       if (messageId) {
@@ -186,38 +210,20 @@ export function SessionHistoryView({
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="page-transition mx-auto flex w-full max-w-5xl flex-col gap-5 px-6 py-8">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="font-display text-lg font-semibold tracking-tight">
-                {t("history.title")}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {t("history.subtitle")}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline-flat"
-              size="xs"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="size-3.5" />
-              {t("common:actions.import")}
-            </Button>
+        <div className="page-transition mx-auto flex w-full max-w-7xl flex-col gap-5 px-6 py-8">
+          <div className="mb-2 max-w-xl">
+            <SearchBar
+              value={search.query}
+              onChange={search.setQuery}
+              placeholder={t("history.searchPlaceholder")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void search.search();
+                }
+              }}
+            />
           </div>
-
-          <SearchBar
-            value={search.query}
-            onChange={search.setQuery}
-            placeholder={t("history.searchPlaceholder")}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void search.search();
-              }
-            }}
-          />
 
           {search.error && (
             <p className="text-xs text-danger">{t("history.searchError")}</p>
@@ -284,8 +290,9 @@ export function SessionHistoryView({
             )
           ) : dateGroups.length > 0 ? (
             dateGroups.map((group) => (
-              <div key={group.label} className="space-y-2">
-                <h2 className="sticky top-0 z-10 bg-background py-1 text-sm font-medium text-muted-foreground">
+              <div key={group.label} className="mt-8 first:mt-0">
+                <div className="mb-2 h-px w-full bg-[var(--color-gray-200)]" />
+                <h2 className="mb-4 text-[10px] text-[var(--text-default-alex)] opacity-25">
                   {group.label}
                 </h2>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -337,6 +344,7 @@ export function SessionHistoryView({
               </div>
             </div>
           )}
+          <BottomFade />
         </div>
       </div>
 

@@ -28,7 +28,7 @@ export function TopBar({
 
   return (
     <header
-      className={cn("flex h-12 items-center gap-2 pl-20 pr-3", className)}
+      className={cn("flex h-16 items-center gap-2 pl-20 pr-3", className)}
       data-tauri-drag-region
     >
       <h1

@@ -754,13 +754,34 @@ Re-skin target:
 - Title: 14px Cash Sans Regular, `color: [--text-default]`
 - Metadata (persona, project, updatedAt): 10px at `color: [--text-muted]`
 - Snippet (when present from search): 14px, `color: [--text-muted]`
-- Surface: no border, no shadow, no solid background
-- Hover: subtle tint (`bg-black/[0.02]` or `bg-[--surface-chrome]` at
-  lower opacity)
-- Menu trigger: `MoreHorizontal` on hover only
+- Surface: subtle fill (`bg-[--surface-tile]` = #f5f5f5),
+  `rounded-xl` (12px), `p-4`, no border, no shadow.
+  Revised at visual review (2026-04-27): the original spec called for
+  no surface, but at production fidelity the cards read as
+  undifferentiated text rows. Subtle fill restores card-as-discrete-
+  unit reading without competing with the dot-grid canvas.
+- Hover: `bg-[--surface-install]` (#dedede) — same token Skills'
+  Install button uses; one shade darker than the resting fill
+- Menu trigger: `MoreHorizontal`, `opacity-0 group-hover:opacity-100
+  focus-within:opacity-100` (visible on hover, keyboard-tabbable)
 
 Functionality (select, rename, archive, unarchive, duplicate, export) —
 unchanged.
+
+### 8.1.1 Import — moved to TopBar (revised 2026-04-27)
+
+Mirroring Skills + Agents (§6.5, §7.1.1), the page-body header
+(h1 + subtitle) and the inline "Import session" button are removed.
+"Import" moves to the global TopBar via `useSetTopBarActions()`. The
+hidden file input (`fileInputRef`) stays co-located in
+`SessionHistoryView` next to its `handleImportSession` change handler;
+the TopBar button just triggers `fileInputRef.current?.click()`
+through a closure pushed into the topbar-actions context.
+
+The `<BottomFade />` shared component (extracted to
+`src/shared/ui/BottomFade.tsx` from Skills + Agents) is rendered at
+the end of the scrollable container — same soft-mask gradient pattern
+across all three pages.
 
 ### 8.2 SessionHistoryView
 

@@ -119,7 +119,7 @@ export function SessionCard({
   return (
     <div
       className={cn(
-        "group relative flex flex-col gap-2 rounded-lg border border-border bg-background p-4 text-left transition-shadow hover:shadow-card",
+        "group relative flex cursor-pointer flex-col gap-1 rounded-xl bg-[var(--surface-tile)] p-4 transition-colors hover:bg-[var(--surface-install)]",
         archivedAt && "opacity-60",
       )}
     >
@@ -153,12 +153,12 @@ export function SessionCard({
           className="relative z-10 text-sm font-medium"
         />
       ) : (
-        <p className="text-sm font-medium line-clamp-2 break-words pr-6">
+        <p className="text-[14px] text-[var(--text-default-alex)] line-clamp-2 break-words pr-6">
           {displayTitle}
         </p>
       )}
 
-      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <div className="flex flex-col gap-1 text-[10px] text-[var(--text-muted-alex)]">
         <div className="flex items-center gap-1.5">
           <Calendar className="size-3 shrink-0" />
           <span>{formatRelativeTimeToNow(updatedAt)}</span>
@@ -192,10 +192,8 @@ export function SessionCard({
       </div>
 
       {(snippet || matchCount) && (
-        <div className="relative z-10 mt-1 space-y-1 text-xs">
-          {snippet && (
-            <p className="line-clamp-3 text-muted-foreground">{snippet}</p>
-          )}
+        <div className="relative z-10 mt-1 space-y-1 text-[14px] text-[var(--text-muted-alex)]">
+          {snippet && <p className="line-clamp-3">{snippet}</p>}
           {typeof matchCount === "number" && (
             <p className="font-medium text-foreground/80">
               {t("search.messageMatches", {
@@ -219,8 +217,8 @@ export function SessionCard({
             className={cn(
               "absolute right-2 top-2 z-10 size-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50",
               menuOpen
-                ? "visible opacity-100"
-                : "invisible group-hover:visible opacity-0 group-hover:opacity-100",
+                ? "opacity-100"
+                : "opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100",
             )}
           >
             <MoreHorizontal className="size-3.5" />
