@@ -45,7 +45,15 @@ impl PersonaStore {
 
     fn load_from_disk(path: &PathBuf) -> Vec<Persona> {
         match std::fs::read_to_string(path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Ok(contents) => {
+                let mut personas: Vec<Persona> =
+                    serde_json::from_str(&contents).unwrap_or_default();
+                let source_path = path.to_string_lossy().to_string();
+                for persona in &mut personas {
+                    persona.source_path = Some(source_path.clone());
+                }
+                personas
+            }
             Err(_) => Vec::new(),
         }
     }
@@ -192,6 +200,7 @@ impl PersonaStore {
             model: None,
             is_builtin: false,
             is_from_disk: true,
+            source_path: Some(path.to_string_lossy().to_string()),
             created_at: mod_time.clone(),
             updated_at: mod_time,
         })
@@ -233,10 +242,15 @@ impl PersonaStore {
         if let Some(parent) = self.store_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        // Only persist custom personas (not builtins, not from markdown files)
-        let custom: Vec<&Persona> = personas
+        // Only persist app-created personas. Source paths are runtime metadata.
+        let custom: Vec<Persona> = personas
             .iter()
             .filter(|p| !p.is_builtin && !p.is_from_disk)
+            .map(|persona| {
+                let mut persona = persona.clone();
+                persona.source_path = None;
+                persona
+            })
             .collect();
         if let Ok(json) = serde_json::to_string_pretty(&custom) {
             let _ = std::fs::write(&self.store_path, json);
@@ -265,6 +279,7 @@ impl PersonaStore {
             model: req.model,
             is_builtin: false,
             is_from_disk: false,
+            source_path: Some(self.store_path.to_string_lossy().to_string()),
             created_at: now.clone(),
             updated_at: now,
         };

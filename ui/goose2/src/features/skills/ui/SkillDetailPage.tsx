@@ -2,10 +2,11 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconDots,
+  IconCopy,
+  IconDeviceFloppy,
   IconFolderOpen,
   IconMessagePlus,
   IconPencil,
-  IconShare,
   IconTrash,
 } from "@tabler/icons-react";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
@@ -28,7 +29,8 @@ interface SkillDetailPageProps {
   onBack: () => void;
   onEdit: (skill: SkillInfo) => void;
   onReveal: (skill: SkillInfo) => void;
-  onShare: (skill: SkillInfo) => void;
+  onCopyFile: (skill: SkillInfo) => void;
+  onSaveCopy: (skill: SkillInfo) => void;
   onStartChat?: (skill: SkillInfo) => void;
   onDelete: (skill: SkillInfo) => void;
 }
@@ -73,7 +75,8 @@ export function SkillDetailPage({
   onBack,
   onEdit,
   onReveal,
-  onShare,
+  onCopyFile,
+  onSaveCopy,
   onStartChat,
   onDelete,
 }: SkillDetailPageProps) {
@@ -153,9 +156,13 @@ export function SkillDetailPage({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={8}>
-                  <DropdownMenuItem onSelect={() => onShare(skill)}>
-                    <IconShare className="size-3.5" />
-                    {t("view.share")}
+                  <DropdownMenuItem onSelect={() => onCopyFile(skill)}>
+                    <IconCopy className="size-3.5" />
+                    {t("view.copyFile")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onSaveCopy(skill)}>
+                    <IconDeviceFloppy className="size-3.5" />
+                    {t("view.saveCopy")}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     variant="destructive"

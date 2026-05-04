@@ -16,7 +16,8 @@ interface PersonaGalleryProps {
   onEditPersona: (persona: Persona) => void;
   onDuplicatePersona: (persona: Persona) => void;
   onDeletePersona: (persona: Persona) => void;
-  onExportPersona?: (persona: Persona) => void;
+  onCopyPersonaFile?: (persona: Persona) => void;
+  onSavePersonaCopy?: (persona: Persona) => void;
   onCreatePersona: () => void;
   onImportFile?: (fileBytes: number[], fileName: string) => void;
   validateImportFile?: (file: Pick<File, "name" | "type">) => string | null;
@@ -55,7 +56,8 @@ export function PersonaGallery({
   onEditPersona,
   onDuplicatePersona,
   onDeletePersona,
-  onExportPersona,
+  onCopyPersonaFile,
+  onSavePersonaCopy,
   onCreatePersona,
   onImportFile,
   validateImportFile,
@@ -152,7 +154,8 @@ export function PersonaGallery({
           onEdit={onEditPersona}
           onDuplicate={onDuplicatePersona}
           onDelete={onDeletePersona}
-          onExport={onExportPersona}
+          onCopyFile={onCopyPersonaFile}
+          onSaveCopy={onSavePersonaCopy}
         />
       ))}
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Download, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Copy, MoreVertical, Pencil, Save, Trash2 } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Avatar, AvatarImage, AvatarFallback } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
@@ -16,6 +16,7 @@ import type { Persona } from "@/shared/types/agents";
 import {
   getPersonaInitials,
   getPersonaSource,
+  isPersonaReadOnly,
 } from "@/features/agents/lib/personaPresentation";
 
 interface PersonaCardProps {
@@ -24,7 +25,8 @@ interface PersonaCardProps {
   onEdit?: (persona: Persona) => void;
   onDuplicate?: (persona: Persona) => void;
   onDelete?: (persona: Persona) => void;
-  onExport?: (persona: Persona) => void;
+  onCopyFile?: (persona: Persona) => void;
+  onSaveCopy?: (persona: Persona) => void;
   isActive?: boolean;
 }
 
@@ -34,7 +36,8 @@ export function PersonaCard({
   onEdit,
   onDuplicate,
   onDelete,
-  onExport,
+  onCopyFile,
+  onSaveCopy,
   isActive = false,
 }: PersonaCardProps) {
   const { t } = useTranslation(["agents", "common"]);
@@ -43,8 +46,10 @@ export function PersonaCard({
   const initials = getPersonaInitials(persona.displayName);
   const avatarSrc = useAvatarSrc(persona.avatar);
   const personaSource = getPersonaSource(persona);
-  const canEditPersona = personaSource === "custom";
+  const canEditPersona = !isPersonaReadOnly(persona);
   const canDeletePersona = personaSource !== "builtin";
+  const hasFileActions =
+    personaSource === "file" && Boolean(persona.sourcePath);
   const isFeatured = personaSource === "builtin";
   const providerModelLabel = [persona.provider, persona.model]
     .filter(Boolean)
@@ -113,6 +118,18 @@ export function PersonaCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={4}>
+              {hasFileActions && (
+                <>
+                  <DropdownMenuItem onSelect={() => onCopyFile?.(persona)}>
+                    <Copy className="size-3.5" />
+                    {t("view.copyFile")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onSaveCopy?.(persona)}>
+                    <Save className="size-3.5" />
+                    {t("view.saveCopy")}
+                  </DropdownMenuItem>
+                </>
+              )}
               {canEditPersona && (
                 <DropdownMenuItem onSelect={() => onEdit?.(persona)}>
                   <Pencil className="size-3.5" />
@@ -122,10 +139,6 @@ export function PersonaCard({
               <DropdownMenuItem onSelect={() => onDuplicate?.(persona)}>
                 <Copy className="size-3.5" />
                 {t("common:actions.duplicate")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onExport?.(persona)}>
-                <Download className="size-3.5" />
-                {t("common:actions.export")}
               </DropdownMenuItem>
               {canDeletePersona && (
                 <DropdownMenuItem

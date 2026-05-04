@@ -29,6 +29,14 @@ export async function saveExportedSessionFile(
   return invoke("save_exported_session_file", { defaultFilename, contents });
 }
 
+export async function copyFileToClipboard(path: string): Promise<void> {
+  return invoke("copy_file_to_clipboard", { path });
+}
+
+export async function saveFileCopy(sourcePath: string): Promise<string | null> {
+  return invoke("save_file_copy", { sourcePath });
+}
+
 export async function pathExists(path: string): Promise<boolean> {
   return invoke("path_exists", { path });
 }

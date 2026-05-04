@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { SearchBar } from "@/shared/ui/SearchBar";
 import { Button, buttonVariants } from "@/shared/ui/button";
 import { PageHeader, PageShell } from "@/shared/ui/page-shell";
+import { revealInFileManager } from "@/shared/lib/fileManager";
+import { copyFileToClipboard, saveFileCopy } from "@/shared/api/system";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,11 +22,7 @@ import { useAgentStore } from "@/features/agents/stores/agentStore";
 import { AgentDetailPage } from "@/features/agents/ui/AgentDetailPage";
 import { PersonaGallery } from "@/features/agents/ui/PersonaGallery";
 import { PersonaEditor } from "@/features/agents/ui/PersonaEditor";
-import {
-  exportPersona,
-  importPersonas,
-  readImportPersonaFile,
-} from "@/shared/api/agents";
+import { importPersonas, readImportPersonaFile } from "@/shared/api/agents";
 import { usePersonas } from "@/features/agents/hooks/usePersonas";
 import type {
   Persona,
@@ -38,7 +36,11 @@ import {
 } from "@/features/agents/lib/personaImport";
 import { getPersonaSource } from "@/features/agents/lib/personaPresentation";
 
-export function AgentsView() {
+interface AgentsViewProps {
+  onStartChatWithPersona?: (persona: Persona) => void;
+}
+
+export function AgentsView({ onStartChatWithPersona }: AgentsViewProps) {
   const { t } = useTranslation(["agents", "common"]);
   const [search, setSearch] = useState("");
   const [deletingPersona, setDeletingPersona] = useState<Persona | null>(null);
@@ -148,29 +150,38 @@ export function AgentsView() {
     t,
   ]);
 
-  const handleExportPersona = useCallback(
+  const handleCopyPersonaFile = useCallback(
     async (persona: Persona) => {
+      if (!persona.sourcePath) return;
       try {
-        const result = await exportPersona(persona.id);
-        // Trigger a browser download with the JSON content
-        const blob = new Blob([result.json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = result.suggestedFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success(
-          t("view.exportedTo", { filename: result.suggestedFilename }),
-        );
+        await copyFileToClipboard(persona.sourcePath);
+        toast.success(t("view.fileCopied"));
       } catch (err) {
-        toast.error(formatAgentError(err, t("view.exportFailed")));
+        toast.error(formatAgentError(err, t("view.copyFileFailed")));
       }
     },
     [t],
   );
+
+  const handleSavePersonaCopy = useCallback(
+    async (persona: Persona) => {
+      if (!persona.sourcePath) return;
+      try {
+        const savedPath = await saveFileCopy(persona.sourcePath);
+        if (savedPath) {
+          toast.success(t("view.copySaved", { path: savedPath }));
+        }
+      } catch (err) {
+        toast.error(formatAgentError(err, t("view.saveCopyFailed")));
+      }
+    },
+    [t],
+  );
+
+  const handleRevealPersona = useCallback((persona: Persona) => {
+    if (!persona.sourcePath) return;
+    void revealInFileManager(persona.sourcePath);
+  }, []);
 
   const handleImportError = useCallback((message: string) => {
     toast.error(message);
@@ -284,9 +295,12 @@ export function AgentsView() {
           persona={activePersona}
           onBack={() => setActivePersonaId(null)}
           onEdit={(persona) => openPersonaEditor(persona, "edit")}
+          onReveal={handleRevealPersona}
+          onStartChat={onStartChatWithPersona}
+          onCopyFile={handleCopyPersonaFile}
+          onSaveCopy={handleSavePersonaCopy}
           onDuplicate={handleDuplicatePersona}
           onDelete={handleDeletePersona}
-          onExport={handleExportPersona}
         />
         {dialogs}
       </>
@@ -338,7 +352,8 @@ export function AgentsView() {
           onEditPersona={(p) => openPersonaEditor(p, "edit")}
           onDuplicatePersona={handleDuplicatePersona}
           onDeletePersona={handleDeletePersona}
-          onExportPersona={handleExportPersona}
+          onCopyPersonaFile={handleCopyPersonaFile}
+          onSavePersonaCopy={handleSavePersonaCopy}
           onCreatePersona={() => openPersonaEditor()}
           onImportFile={handleImportFileBytes}
           validateImportFile={validateImportFile}

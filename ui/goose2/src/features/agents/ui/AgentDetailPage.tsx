@@ -1,6 +1,14 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Download, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import {
+  Copy,
+  FolderOpen,
+  MessageSquarePlus,
+  MoreVertical,
+  Pencil,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
   Avatar as AvatarRoot,
@@ -31,9 +39,12 @@ interface AgentDetailPageProps {
   persona: Persona;
   onBack: () => void;
   onEdit: (persona: Persona) => void;
+  onReveal: (persona: Persona) => void;
+  onStartChat?: (persona: Persona) => void;
+  onCopyFile: (persona: Persona) => void;
+  onSaveCopy: (persona: Persona) => void;
   onDuplicate: (persona: Persona) => void;
   onDelete: (persona: Persona) => void;
-  onExport: (persona: Persona) => void;
 }
 
 interface AgentHeaderActionButtonProps
@@ -86,16 +97,22 @@ export function AgentDetailPage({
   persona,
   onBack,
   onEdit,
+  onReveal,
+  onStartChat,
+  onCopyFile,
+  onSaveCopy,
   onDuplicate,
   onDelete,
-  onExport,
 }: AgentDetailPageProps) {
   const { t } = useTranslation(["agents", "common"]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const avatarSrc = useAvatarSrc(persona.avatar);
   const initials = getPersonaInitials(persona.displayName);
   const personaSource = getPersonaSource(persona);
   const canEditPersona = !isPersonaReadOnly(persona);
   const canDeletePersona = personaSource !== "builtin";
+  const hasFileActions =
+    personaSource === "file" && Boolean(persona.sourcePath);
   const sourceLabel =
     personaSource === "builtin"
       ? t("common:labels.builtIn")
@@ -104,6 +121,7 @@ export function AgentDetailPage({
         : t("card.custom");
   const providerLabel = persona.provider || t("common:labels.none");
   const modelLabel = persona.model || t("common:labels.none");
+  const moreLabel = t("view.more");
 
   return (
     <DetailPageShell>
@@ -139,6 +157,13 @@ export function AgentDetailPage({
           actionsPlacement="below"
           actions={
             <>
+              {onStartChat ? (
+                <AgentHeaderActionButton
+                  label={t("view.startChatShort")}
+                  icon={<MessageSquarePlus className="size-3.5" />}
+                  onClick={() => onStartChat(persona)}
+                />
+              ) : null}
               {canEditPersona ? (
                 <AgentHeaderActionButton
                   label={t("common:actions.edit")}
@@ -146,30 +171,43 @@ export function AgentDetailPage({
                   onClick={() => onEdit(persona)}
                 />
               ) : null}
-              <AgentHeaderActionButton
-                label={t("editor.duplicate")}
-                icon={<Copy className="size-3.5" />}
-                onClick={() => onDuplicate(persona)}
-              />
-              <AgentHeaderActionButton
-                label={t("common:actions.export")}
-                icon={<Download className="size-3.5" />}
-                onClick={() => onExport(persona)}
-              />
-              {canDeletePersona ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="outline-flat"
-                      aria-label={t("view.more")}
-                    >
-                      <MoreVertical className="size-3.5" />
-                      <span className="sr-only">{t("view.more")}</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={8}>
+              {persona.sourcePath ? (
+                <AgentHeaderActionButton
+                  label={t("view.reveal")}
+                  icon={<FolderOpen className="size-3.5" />}
+                  onClick={() => onReveal(persona)}
+                />
+              ) : null}
+              <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline-flat"
+                    aria-label={moreLabel}
+                  >
+                    <MoreVertical className="size-3.5" />
+                    <span className="sr-only">{moreLabel}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" sideOffset={8}>
+                  {hasFileActions ? (
+                    <>
+                      <DropdownMenuItem onSelect={() => onCopyFile(persona)}>
+                        <Copy className="size-3.5" />
+                        {t("view.copyFile")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onSaveCopy(persona)}>
+                        <Save className="size-3.5" />
+                        {t("view.saveCopy")}
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                  <DropdownMenuItem onSelect={() => onDuplicate(persona)}>
+                    <Copy className="size-3.5" />
+                    {t("editor.duplicate")}
+                  </DropdownMenuItem>
+                  {canDeletePersona ? (
                     <DropdownMenuItem
                       variant="destructive"
                       onSelect={() => onDelete(persona)}
@@ -177,9 +215,9 @@ export function AgentDetailPage({
                       <Trash2 className="size-3.5" />
                       {t("common:actions.delete")}
                     </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           }
           actionsClassName="gap-2"
@@ -197,6 +235,16 @@ export function AgentDetailPage({
               <DetailField label={t("view.source")}>
                 <Badge variant="secondary">{sourceLabel}</Badge>
               </DetailField>
+
+              {persona.sourcePath ? (
+                <DetailField
+                  label={t("view.filePath")}
+                  contentAs="p"
+                  contentClassName="break-all text-foreground"
+                >
+                  {persona.sourcePath}
+                </DetailField>
+              ) : null}
 
               <DetailField
                 label={t("editor.provider")}

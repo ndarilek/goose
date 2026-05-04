@@ -7,6 +7,7 @@ import { DEFAULT_LOCALE, TRANSLATION_NAMESPACES, i18n } from "@/shared/i18n";
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(),
   openUrl: vi.fn(),
+  revealItemInDir: vi.fn(),
 }));
 
 vi.mock("react-syntax-highlighter", () => ({

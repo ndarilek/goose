@@ -33,6 +33,7 @@ import { useProviderInventoryStore } from "@/features/providers/stores/providerI
 import { sanitizeReplayMessages } from "@/features/chat/lib/replaySanitizer";
 import type { SkillInfo } from "@/features/skills/api/skills";
 import { toChatSkillDraft } from "@/features/skills/lib/skillChatPrompt";
+import type { Persona } from "@/shared/types/agents";
 
 export type AppView =
   | "home"
@@ -264,18 +265,36 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   }, [activeView, ensureHomeSession]);
 
   const createNewTab = useCallback(
-    async (title = DEFAULT_CHAT_TITLE, project?: ProjectInfo) => {
+    async (
+      title = DEFAULT_CHAT_TITLE,
+      project?: ProjectInfo,
+      options?: { persona?: Persona },
+    ) => {
       const tStart = performance.now();
       perfLog(
         `[perf:newtab] createNewTab start (project=${project?.id ?? "none"})`,
       );
+      const persona = options?.persona;
+      const personaProvider = persona?.provider
+        ? agentStore.providers.find(
+            (provider) =>
+              provider.id === persona.provider ||
+              provider.label
+                .toLowerCase()
+                .includes(persona.provider?.toLowerCase() ?? ""),
+          )
+        : undefined;
       const providerId =
-        project?.preferredProvider ?? agentStore.selectedProvider ?? "goose";
+        personaProvider?.id ??
+        persona?.provider ??
+        project?.preferredProvider ??
+        agentStore.selectedProvider ??
+        "goose";
       const sessionModelPreference =
         await resolveSupportedSessionModelPreference(
           providerId,
           providerInventoryEntries,
-          project?.preferredModel ?? undefined,
+          persona?.model ?? project?.preferredModel ?? undefined,
         );
       const sessionState = useChatSessionStore.getState();
       const chatState = useChatStore.getState();
@@ -287,6 +306,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         request: {
           title,
           projectId: project?.id,
+          personaId: persona?.id,
         },
       });
 
@@ -305,6 +325,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         title,
         projectId: project?.id,
         providerId: sessionModelPreference.providerId,
+        personaId: persona?.id,
         workingDir,
         modelId: sessionModelPreference.modelId,
         modelName: sessionModelPreference.modelName,
@@ -319,6 +340,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     },
     [
       agentStore.selectedProvider,
+      agentStore.providers,
       chatStore,
       providerInventoryEntries,
       sessionStore,
@@ -349,6 +371,24 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         });
     },
     [createNewTab, projectStore.projects],
+  );
+
+  const handleStartChatWithPersona = useCallback(
+    (persona: Persona) => {
+      const matchingAgent = useAgentStore
+        .getState()
+        .agents.find((agent) => agent.personaId === persona.id);
+      if (matchingAgent) {
+        useAgentStore.getState().setActiveAgent(matchingAgent.id);
+      }
+
+      void createNewTab(DEFAULT_CHAT_TITLE, undefined, { persona }).catch(
+        (error) => {
+          console.error("Failed to start chat with agent:", error);
+        },
+      );
+    },
+    [createNewTab],
   );
 
   const handleNewChatInProject = useCallback(
@@ -703,6 +743,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
               onSelectSearchResult={handleSelectSearchResult}
               onStartChatFromProject={handleStartChatFromProject}
               onStartChatWithSkill={handleStartChatWithSkill}
+              onStartChatWithPersona={handleStartChatWithPersona}
             />
           )}
         </main>

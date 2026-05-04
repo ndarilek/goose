@@ -8,6 +8,7 @@ import { SessionHistoryView } from "@/features/sessions/ui/SessionHistoryView";
 import type { ChatSession } from "@/features/chat/stores/chatSessionStore";
 import type { SkillInfo } from "@/features/skills/api/skills";
 import type { ProjectInfo } from "@/features/projects/api/projects";
+import type { Persona } from "@/shared/types/agents";
 import type { AppView } from "../AppShell";
 
 interface AppShellContentProps {
@@ -30,6 +31,7 @@ interface AppShellContentProps {
   ) => void;
   onStartChatFromProject: (project: ProjectInfo) => void;
   onStartChatWithSkill: (skill: SkillInfo, projectId?: string | null) => void;
+  onStartChatWithPersona: (persona: Persona) => void;
 }
 
 export function AppShellContent({
@@ -45,6 +47,7 @@ export function AppShellContent({
   onSelectSearchResult,
   onStartChatFromProject,
   onStartChatWithSkill,
+  onStartChatWithPersona,
 }: AppShellContentProps) {
   switch (activeView) {
     case "skills":
@@ -52,7 +55,7 @@ export function AppShellContent({
     case "extensions":
       return <ExtensionsView />;
     case "agents":
-      return <AgentsView />;
+      return <AgentsView onStartChatWithPersona={onStartChatWithPersona} />;
     case "projects":
       return <ProjectsView onStartChat={onStartChatFromProject} />;
     case "session-history":

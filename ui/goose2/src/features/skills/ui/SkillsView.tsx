@@ -216,7 +216,8 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
     dropHandlers,
     handleFileChange,
     openFilePicker,
-    handleExport,
+    handleCopyFile,
+    handleSaveCopy,
   } = useSkillImportExport(refreshSkills);
 
   const handleSelectSkill = (skill: SkillViewInfo) => {
@@ -243,7 +244,8 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
           onBack={() => setActiveSkillId(null)}
           onEdit={handleEdit}
           onReveal={handleReveal}
-          onShare={handleExport}
+          onCopyFile={handleCopyFile}
+          onSaveCopy={handleSaveCopy}
           onStartChat={onStartChatWithSkill ? handleStartChat : undefined}
           onDelete={handleDelete}
         />

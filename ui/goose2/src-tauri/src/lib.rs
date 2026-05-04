@@ -74,6 +74,8 @@ pub fn run() {
             commands::path_resolver::resolve_path,
             commands::system::get_home_dir,
             commands::system::save_exported_session_file,
+            commands::system::copy_file_to_clipboard,
+            commands::system::save_file_copy,
             commands::system::path_exists,
             commands::system::list_directory_entries,
             commands::system::inspect_attachment_paths,

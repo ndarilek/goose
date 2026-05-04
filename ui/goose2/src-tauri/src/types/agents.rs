@@ -90,6 +90,8 @@ pub struct Persona {
     pub is_builtin: bool,
     #[serde(default)]
     pub is_from_disk: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
