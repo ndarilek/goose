@@ -27,6 +27,7 @@ import {
 import { PageColumns } from "@/shared/ui/page-columns";
 import { DetailPageShell, PageHeader } from "@/shared/ui/page-shell";
 import { useAvatarSrc } from "@/shared/hooks/useAvatarSrc";
+import { isFileClipboardSupported } from "@/shared/api/system";
 import type { Persona } from "@/shared/types/agents";
 import { getPersonaInitials } from "@/features/agents/lib/personaPresentation";
 
@@ -81,6 +82,7 @@ export function AgentDetailPage({
   const avatarSrc = useAvatarSrc(persona.avatar);
   const initials = getPersonaInitials(persona.displayName);
   const hasFileActions = Boolean(persona.sourcePath);
+  const canCopyFile = isFileClipboardSupported();
   const providerLabel = persona.provider || t("common:labels.none");
   const modelLabel = persona.model || t("common:labels.none");
   const shareLabel = t("view.share");
@@ -145,10 +147,12 @@ export function AgentDetailPage({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={8}>
-                  <DropdownMenuItem onSelect={() => onCopyFile(persona)}>
-                    <Copy className="size-3.5" />
-                    {t("view.copyFile")}
-                  </DropdownMenuItem>
+                  {canCopyFile ? (
+                    <DropdownMenuItem onSelect={() => onCopyFile(persona)}>
+                      <Copy className="size-3.5" />
+                      {t("view.copyFile")}
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onSelect={() => onSaveCopy(persona)}>
                     <Save className="size-3.5" />
                     {t("view.saveCopy")}

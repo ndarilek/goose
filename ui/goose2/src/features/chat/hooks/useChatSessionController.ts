@@ -11,6 +11,7 @@ import { useAgentStore } from "@/features/agents/stores/agentStore";
 import { useProviderSelection } from "@/features/agents/hooks/useProviderSelection";
 import { useProjectStore } from "@/features/projects/stores/projectStore";
 import { resolveAgentProviderCatalogIdStrict } from "@/features/providers/providerCatalog";
+import { resolvePersonaProvider } from "@/features/providers/lib/resolvePersonaProvider";
 import {
   buildProjectSystemPrompt,
   composeSystemPrompt,
@@ -348,10 +349,9 @@ export function useChatSessionController({
       const persona = personas.find((candidate) => candidate.id === personaId);
 
       if (persona?.provider) {
-        const matchingProvider = providers.find(
-          (provider) =>
-            provider.id === persona.provider ||
-            provider.label.toLowerCase().includes(persona.provider ?? ""),
+        const matchingProvider = resolvePersonaProvider(
+          providers,
+          persona.provider,
         );
         if (matchingProvider) {
           if (!sessionId) {

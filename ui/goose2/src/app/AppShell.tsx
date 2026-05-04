@@ -30,6 +30,7 @@ import {
 import { resolveSessionCwd } from "@/features/projects/lib/sessionCwdSelection";
 import { perfLog } from "@/shared/lib/perfLog";
 import { useProviderInventoryStore } from "@/features/providers/stores/providerInventoryStore";
+import { resolvePersonaProvider } from "@/features/providers/lib/resolvePersonaProvider";
 import { sanitizeReplayMessages } from "@/features/chat/lib/replaySanitizer";
 import type { SkillInfo } from "@/features/skills/api/skills";
 import { toChatSkillDraft } from "@/features/skills/lib/skillChatPrompt";
@@ -275,18 +276,17 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         `[perf:newtab] createNewTab start (project=${project?.id ?? "none"})`,
       );
       const persona = options?.persona;
-      const personaProvider = persona?.provider
-        ? agentStore.providers.find(
-            (provider) =>
-              provider.id === persona.provider ||
-              provider.label
-                .toLowerCase()
-                .includes(persona.provider?.toLowerCase() ?? ""),
-          )
-        : undefined;
+      const personaProvider = resolvePersonaProvider(
+        agentStore.providers,
+        persona?.provider,
+      );
+      const hasPersonaProviderPreference = Boolean(persona?.provider?.trim());
+      const personaModel =
+        personaProvider || !hasPersonaProviderPreference
+          ? persona?.model
+          : undefined;
       const providerId =
         personaProvider?.id ??
-        persona?.provider ??
         project?.preferredProvider ??
         agentStore.selectedProvider ??
         "goose";
@@ -294,7 +294,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         await resolveSupportedSessionModelPreference(
           providerId,
           providerInventoryEntries,
-          persona?.model ?? project?.preferredModel ?? undefined,
+          personaModel ?? project?.preferredModel ?? undefined,
         );
       const sessionState = useChatSessionStore.getState();
       const chatState = useChatStore.getState();

@@ -5,6 +5,10 @@ import userEvent from "@testing-library/user-event";
 import type { Persona } from "@/shared/types/agents";
 import { AgentDetailPage } from "../AgentDetailPage";
 
+vi.mock("@/shared/api/system", () => ({
+  isFileClipboardSupported: () => true,
+}));
+
 function makePersona(overrides: Partial<Persona> = {}): Persona {
   return {
     id: "p1",

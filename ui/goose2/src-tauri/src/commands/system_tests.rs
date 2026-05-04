@@ -1,7 +1,7 @@
 use super::{
     build_file_tree_entry, inspect_attachment_path, inspect_attachment_paths,
     normalize_attachment_paths, normalize_roots, read_directory_entries, read_image_attachment,
-    scan_files_for_mentions, MAX_IMAGE_ATTACHMENT_BYTES,
+    scan_files_for_mentions, validate_shareable_source_file, MAX_IMAGE_ATTACHMENT_BYTES,
 };
 use base64::Engine;
 use std::fs;
@@ -269,4 +269,65 @@ fn rejects_oversized_image_attachment_payloads() {
         read_image_attachment(image.to_string_lossy().into_owned()).expect_err("size limit");
 
     assert!(error.contains("exceeds the 20 MB limit"));
+}
+
+#[test]
+fn shareable_source_validation_accepts_agent_and_skill_files() {
+    let dir = tempdir().expect("tempdir");
+    let agent_file = dir.path().join(".agents").join("agents").join("helper.md");
+    let skill_file = dir
+        .path()
+        .join(".agents")
+        .join("skills")
+        .join("review")
+        .join("SKILL.md");
+    let config_skill_file = dir
+        .path()
+        .join("Block")
+        .join("goose")
+        .join("skills")
+        .join("legacy")
+        .join("SKILL.md");
+    fs::create_dir_all(agent_file.parent().expect("agent parent")).expect("agent dir");
+    fs::create_dir_all(skill_file.parent().expect("skill parent")).expect("skill dir");
+    fs::create_dir_all(config_skill_file.parent().expect("config skill parent"))
+        .expect("config skill dir");
+    fs::write(&agent_file, "---\nname: Helper\n---\n").expect("agent file");
+    fs::write(&skill_file, "---\nname: review\n---\n").expect("skill file");
+    fs::write(&config_skill_file, "---\nname: legacy\n---\n").expect("config skill file");
+
+    assert!(validate_shareable_source_file(&agent_file).is_ok());
+    assert!(validate_shareable_source_file(&skill_file).is_ok());
+    assert!(validate_shareable_source_file(&config_skill_file).is_ok());
+}
+
+#[test]
+fn shareable_source_validation_rejects_unrelated_files() {
+    let dir = tempdir().expect("tempdir");
+    let markdown_file = dir.path().join("notes.md");
+    let text_file = dir
+        .path()
+        .join(".agents")
+        .join("skills")
+        .join("review")
+        .join("notes.txt");
+    fs::create_dir_all(text_file.parent().expect("text parent")).expect("skill dir");
+    fs::write(&markdown_file, "# private notes\n").expect("markdown file");
+    fs::write(&text_file, "private notes\n").expect("text file");
+
+    assert!(validate_shareable_source_file(&markdown_file).is_err());
+    assert!(validate_shareable_source_file(&text_file).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn shareable_source_validation_rejects_symlinks_outside_allowed_roots() {
+    let dir = tempdir().expect("tempdir");
+    let private_file = dir.path().join("private.md");
+    let linked_agent = dir.path().join(".agents").join("agents").join("linked.md");
+    fs::create_dir_all(linked_agent.parent().expect("agent parent")).expect("agent dir");
+    fs::write(&private_file, "private notes\n").expect("private file");
+    std::os::unix::fs::symlink(&private_file, &linked_agent).expect("symlink");
+
+    assert!(validate_shareable_source_file(&linked_agent).is_err());
 }

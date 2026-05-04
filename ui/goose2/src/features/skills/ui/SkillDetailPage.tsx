@@ -21,6 +21,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { PageColumns } from "@/shared/ui/page-columns";
 import { DetailPageShell, PageHeader } from "@/shared/ui/page-shell";
+import { isFileClipboardSupported } from "@/shared/api/system";
 import type { SkillInfo } from "../api/skills";
 import type { SkillViewInfo } from "../lib/skillCategories";
 
@@ -91,6 +92,7 @@ export function SkillDetailPage({
   const editLabel = t("common:actions.edit");
   const shareLabel = t("view.share");
   const moreLabel = t("view.more");
+  const canCopyFile = isFileClipboardSupported();
 
   return (
     <DetailPageShell>
@@ -137,10 +139,12 @@ export function SkillDetailPage({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={8}>
-                  <DropdownMenuItem onSelect={() => onCopyFile(skill)}>
-                    <Copy className="size-3.5" />
-                    {t("view.copyFile")}
-                  </DropdownMenuItem>
+                  {canCopyFile ? (
+                    <DropdownMenuItem onSelect={() => onCopyFile(skill)}>
+                      <Copy className="size-3.5" />
+                      {t("view.copyFile")}
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onSelect={() => onSaveCopy(skill)}>
                     <Save className="size-3.5" />
                     {t("view.saveCopy")}

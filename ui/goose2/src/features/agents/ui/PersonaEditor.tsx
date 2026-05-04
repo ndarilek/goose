@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
@@ -80,6 +80,10 @@ export function PersonaEditor({
   const [systemPrompt, setSystemPrompt] = useState("");
   const [provider, setProvider] = useState<ProviderType | "">("");
   const [model, setModel] = useState("");
+  const formInitializationKey = isOpen
+    ? `${mode}:${persona?.id ?? "new"}`
+    : "closed";
+  const lastFormInitializationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -112,20 +116,30 @@ export function PersonaEditor({
   }, [isOpen, mergeInventoryEntries, setProviders]);
 
   useEffect(() => {
-    if (isOpen && persona) {
+    if (!isOpen) {
+      lastFormInitializationKeyRef.current = null;
+      return;
+    }
+
+    if (lastFormInitializationKeyRef.current === formInitializationKey) {
+      return;
+    }
+    lastFormInitializationKeyRef.current = formInitializationKey;
+
+    if (persona) {
       setDisplayName(persona.displayName);
       setAvatar(persona.avatar ?? null);
       setSystemPrompt(persona.systemPrompt);
       setProvider(persona.provider ?? "");
       setModel(persona.model ?? "");
-    } else if (isOpen) {
+    } else {
       setDisplayName("");
       setAvatar(null);
       setSystemPrompt("");
       setProvider("");
       setModel("");
     }
-  }, [isOpen, persona]);
+  }, [formInitializationKey, isOpen, persona]);
 
   const isValid =
     displayName.trim().length > 0 && systemPrompt.trim().length > 0;

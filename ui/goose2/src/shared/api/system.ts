@@ -33,6 +33,22 @@ export async function copyFileToClipboard(path: string): Promise<void> {
   return invoke("copy_file_to_clipboard", { path });
 }
 
+export function isFileClipboardSupported(): boolean {
+  if (typeof navigator === "undefined") {
+    return true;
+  }
+
+  const nav = navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  };
+  const platform = [nav.userAgentData?.platform, nav.platform, nav.userAgent]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return !platform.includes("linux");
+}
+
 export async function saveFileCopy(sourcePath: string): Promise<string | null> {
   return invoke("save_file_copy", { sourcePath });
 }

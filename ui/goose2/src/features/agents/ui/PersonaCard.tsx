@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { useAvatarSrc } from "@/shared/hooks/useAvatarSrc";
+import { isFileClipboardSupported } from "@/shared/api/system";
 import type { Persona } from "@/shared/types/agents";
 import { getPersonaInitials } from "@/features/agents/lib/personaPresentation";
 
@@ -55,6 +56,7 @@ export function PersonaCard({
   const initials = getPersonaInitials(persona.displayName);
   const avatarSrc = useAvatarSrc(persona.avatar);
   const hasFileActions = Boolean(persona.sourcePath);
+  const canCopyFile = isFileClipboardSupported();
   const providerModelLabel = [persona.provider, persona.model]
     .filter(Boolean)
     .join(" / ");
@@ -131,10 +133,12 @@ export function PersonaCard({
                     {t("view.share")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => onCopyFile?.(persona)}>
-                      <Copy className="size-3.5" />
-                      {t("view.copyFile")}
-                    </DropdownMenuItem>
+                    {canCopyFile ? (
+                      <DropdownMenuItem onSelect={() => onCopyFile?.(persona)}>
+                        <Copy className="size-3.5" />
+                        {t("view.copyFile")}
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem onSelect={() => onSaveCopy?.(persona)}>
                       <Save className="size-3.5" />
                       {t("view.saveCopy")}

@@ -16,6 +16,7 @@ import {
   AccordionSectionTrigger,
 } from "@/shared/ui/accordion";
 import { Button } from "@/shared/ui/button";
+import { isFileClipboardSupported } from "@/shared/api/system";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,6 +55,7 @@ export function SkillsListSections({
   onDelete,
 }: SkillsListSectionsProps) {
   const { t } = useTranslation(["skills", "common"]);
+  const canCopyFile = isFileClipboardSupported();
 
   return (
     <Accordion
@@ -132,12 +134,14 @@ export function SkillsListSections({
                             {t("view.share")}
                           </DropdownMenuSubTrigger>
                           <DropdownMenuSubContent>
-                            <DropdownMenuItem
-                              onSelect={() => onCopyFile(skill)}
-                            >
-                              <Copy className="size-3.5" />
-                              {t("view.copyFile")}
-                            </DropdownMenuItem>
+                            {canCopyFile ? (
+                              <DropdownMenuItem
+                                onSelect={() => onCopyFile(skill)}
+                              >
+                                <Copy className="size-3.5" />
+                                {t("view.copyFile")}
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuItem
                               onSelect={() => onSaveCopy(skill)}
                             >

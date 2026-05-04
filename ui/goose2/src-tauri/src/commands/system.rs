@@ -5,7 +5,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
@@ -80,35 +80,78 @@ pub async fn save_exported_session_file(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-fn validate_copyable_file(path: &Path) -> Result<(), String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("Failed to inspect '{}': {}", path.display(), error))?;
-    if !metadata.is_file() {
-        return Err(format!("Path is not a file: {}", path.display()));
-    }
-    Ok(())
+fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
-#[cfg(target_os = "macos")]
-fn escape_applescript_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+fn has_sequence_with_remaining(path: &Path, sequence: &[&str], remaining: usize) -> bool {
+    let components = path_components(path);
+    components
+        .windows(sequence.len())
+        .enumerate()
+        .any(|(index, window)| {
+            window
+                .iter()
+                .map(String::as_str)
+                .eq(sequence.iter().copied())
+                && components.len() == index + sequence.len() + remaining
+        })
+}
+
+fn is_shareable_agent_file(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("md")
+        && (has_sequence_with_remaining(path, &[".agents", "agents"], 1)
+            || has_sequence_with_remaining(path, &[".goose", "agents"], 1))
+}
+
+fn is_shareable_skill_file(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        && (has_sequence_with_remaining(path, &[".agents", "skills"], 2)
+            || has_sequence_with_remaining(path, &[".goose", "skills"], 2)
+            || has_sequence_with_remaining(path, &[".claude", "skills"], 2)
+            || has_sequence_with_remaining(path, &[".config", "agents", "skills"], 2)
+            || has_sequence_with_remaining(path, &["goose", "skills"], 2))
+}
+
+fn validate_shareable_source_file(path: &Path) -> Result<PathBuf, String> {
+    let source = path
+        .canonicalize()
+        .map_err(|error| format!("Failed to inspect '{}': {}", path.display(), error))?;
+    let metadata = fs::metadata(&source)
+        .map_err(|error| format!("Failed to inspect '{}': {}", source.display(), error))?;
+    if !metadata.is_file() {
+        return Err(format!("Path is not a file: {}", source.display()));
+    }
+    if !is_shareable_agent_file(&source) && !is_shareable_skill_file(&source) {
+        return Err(format!(
+            "Path is not a shareable agent or skill file: {}",
+            source.display()
+        ));
+    }
+    Ok(source)
 }
 
 #[tauri::command]
 pub fn copy_file_to_clipboard(path: String) -> Result<(), String> {
-    let source = PathBuf::from(&path);
-    validate_copyable_file(&source)?;
+    let source = validate_shareable_source_file(Path::new(&path))?;
 
     #[cfg(target_os = "macos")]
     {
-        let source_string = source.to_string_lossy();
-        let script = format!(
-            "set the clipboard to POSIX file \"{}\"",
-            escape_applescript_string(source_string.as_ref())
-        );
         let output = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set the clipboard to POSIX file (item 1 of argv)",
+                "-e",
+                "end run",
+            ])
+            .arg(source.as_os_str())
             .output()
             .map_err(|error| format!("Failed to copy file: {}", error))?;
 
@@ -126,13 +169,14 @@ pub fn copy_file_to_clipboard(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let escaped = source.to_string_lossy().replace('\'', "''");
-        let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; [void]$files.Add('{}'); [System.Windows.Forms.Clipboard]::SetFileDropList($files)",
-            escaped
-        );
         let output = Command::new("powershell")
-            .args(["-Sta", "-NoProfile", "-Command", &script])
+            .args([
+                "-Sta",
+                "-NoProfile",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; [void]$files.Add($args[0]); [System.Windows.Forms.Clipboard]::SetFileDropList($files)",
+            ])
+            .arg(source.as_os_str())
             .output()
             .map_err(|error| format!("Failed to copy file: {}", error))?;
 
@@ -156,8 +200,7 @@ pub fn copy_file_to_clipboard(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn save_file_copy(window: Window, source_path: String) -> Result<Option<String>, String> {
-    let source = PathBuf::from(&source_path);
-    validate_copyable_file(&source)?;
+    let source = validate_shareable_source_file(Path::new(&source_path))?;
     let file_name = source
         .file_name()
         .and_then(|name| name.to_str())
@@ -184,7 +227,7 @@ pub async fn save_file_copy(window: Window, source_path: String) -> Result<Optio
         .into_path()
         .map_err(|_| "Selected save path is not available".to_string())?;
 
-    if source.canonicalize().ok() == destination.canonicalize().ok() {
+    if Some(source.as_path()) == destination.canonicalize().ok().as_deref() {
         return Ok(Some(destination.to_string_lossy().into_owned()));
     }
 
