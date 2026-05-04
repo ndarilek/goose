@@ -141,20 +141,7 @@ impl PersonaStore {
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-        // Expect file to start with "---"
-        let trimmed = content.trim_start();
-        if !trimmed.starts_with("---") {
-            return Err("Missing frontmatter delimiter".to_string());
-        }
-
-        // Find the closing "---"
-        let after_first = &trimmed[3..];
-        let end_idx = after_first
-            .find("\n---")
-            .ok_or_else(|| "Missing closing frontmatter delimiter".to_string())?;
-
-        let yaml_str = &after_first[..end_idx];
-        let body = after_first[end_idx + 4..].trim().to_string();
+        let (yaml_str, body) = Self::split_markdown_persona(&content)?;
 
         let frontmatter: MarkdownFrontmatter = serde_yaml::from_str(yaml_str)
             .map_err(|e| format!("Invalid frontmatter YAML: {}", e))?;
@@ -204,6 +191,59 @@ impl PersonaStore {
             created_at: mod_time.clone(),
             updated_at: mod_time,
         })
+    }
+
+    fn split_markdown_persona(content: &str) -> Result<(&str, String), String> {
+        let trimmed = content.trim_start();
+        if !trimmed.starts_with("---") {
+            return Err("Missing frontmatter delimiter".to_string());
+        }
+
+        let after_first = &trimmed[3..];
+        let end_idx = after_first
+            .find("\n---")
+            .ok_or_else(|| "Missing closing frontmatter delimiter".to_string())?;
+
+        let yaml_str = &after_first[..end_idx];
+        let body = after_first[end_idx + 4..].trim().to_string();
+
+        Ok((yaml_str, body))
+    }
+
+    fn update_markdown_persona_file(
+        id: &str,
+        req: &UpdatePersonaRequest,
+    ) -> Result<Persona, String> {
+        let path = Self::markdown_persona_path(id)?;
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+        let (yaml_str, current_body) = Self::split_markdown_persona(&content)?;
+
+        let mut frontmatter: serde_yaml::Mapping = serde_yaml::from_str(yaml_str)
+            .map_err(|e| format!("Invalid frontmatter YAML: {}", e))?;
+
+        if let Some(name) = &req.display_name {
+            frontmatter.insert(
+                serde_yaml::Value::String("name".to_string()),
+                serde_yaml::Value::String(name.clone()),
+            );
+        }
+
+        let body = req
+            .system_prompt
+            .clone()
+            .unwrap_or(current_body)
+            .trim()
+            .to_string();
+
+        let yaml = serde_yaml::to_string(&frontmatter)
+            .map_err(|e| format!("Failed to serialize frontmatter: {}", e))?;
+        let next_content = format!("---\n{}---\n\n{}\n", yaml, body);
+
+        std::fs::write(&path, next_content)
+            .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))?;
+
+        Self::parse_markdown_persona(&path)
     }
 
     fn markdown_persona_path(id: &str) -> Result<PathBuf, String> {
@@ -301,7 +341,9 @@ impl PersonaStore {
             return Err("Cannot update a built-in persona".to_string());
         }
         if persona.is_from_disk {
-            return Err("Cannot update a markdown persona — edit the file directly".to_string());
+            let updated = Self::update_markdown_persona_file(id, &req)?;
+            *persona = updated.clone();
+            return Ok(updated);
         }
 
         if let Some(name) = req.display_name {
@@ -448,25 +490,5 @@ impl PersonaStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::PersonaStore;
-
-    #[test]
-    fn markdown_persona_path_rejects_parent_segments() {
-        assert!(PersonaStore::markdown_persona_path("md-../secret").is_err());
-        assert!(PersonaStore::markdown_persona_path("md-..").is_err());
-    }
-
-    #[test]
-    fn markdown_persona_path_rejects_path_separators() {
-        assert!(PersonaStore::markdown_persona_path("md-nested/slug").is_err());
-        assert!(PersonaStore::markdown_persona_path(r"md-nested\slug").is_err());
-    }
-
-    #[test]
-    fn markdown_persona_path_accepts_normal_slug() {
-        let path = PersonaStore::markdown_persona_path("md-scout").unwrap();
-        let file_name = path.file_name().and_then(|name| name.to_str());
-        assert_eq!(file_name, Some("scout.md"));
-    }
-}
+#[path = "personas_tests.rs"]
+mod tests;

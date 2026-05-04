@@ -74,7 +74,8 @@ export function PersonaEditor({
   const readOnlyBySource = persona ? isPersonaReadOnly(persona) : false;
   const isReadOnly = detailsMode || readOnlyBySource;
   const personaSource = persona ? getPersonaSource(persona) : "custom";
-  const canEditPersona = personaSource === "custom";
+  const canEditPersona = !readOnlyBySource;
+  const isFileBacked = personaSource === "file";
   const canDeletePersona = personaSource !== "builtin";
   const acpProviders = useAgentStore((s) => s.providers);
   const setProviders = useAgentStore((s) => s.setProviders);
@@ -151,9 +152,7 @@ export function PersonaEditor({
     : model || "__none__";
 
   const readOnlyDescription = readOnlyBySource
-    ? personaSource === "builtin"
-      ? t("editor.readOnlyBuiltIn")
-      : t("editor.readOnlyFile")
+    ? t("editor.readOnlyBuiltIn")
     : null;
   const providerLabel = provider
     ? (acpProviders.find((providerOption) => providerOption.id === provider)
@@ -225,7 +224,7 @@ export function PersonaEditor({
           <DialogBody asChild className="space-y-4 px-5 pb-5">
             <form id="persona-form" onSubmit={handleSubmit}>
               <div className="flex justify-center">
-                {isReadOnly ? (
+                {isReadOnly || isFileBacked ? (
                   <AvatarRoot className="h-16 w-16 border border-border">
                     <AvatarImage
                       src={avatarSrc ?? undefined}
@@ -302,12 +301,13 @@ export function PersonaEditor({
                       setModel("");
                     }
                   }}
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || isFileBacked}
                 >
                   <SelectTrigger
                     className={cn(
                       "w-full",
-                      isReadOnly && "opacity-70 cursor-not-allowed",
+                      (isReadOnly || isFileBacked) &&
+                        "opacity-70 cursor-not-allowed",
                     )}
                   >
                     <SelectValue placeholder={t("common:labels.none")} />
@@ -345,12 +345,13 @@ export function PersonaEditor({
                     }
                     setModel(value);
                   }}
-                  disabled={isReadOnly || !provider}
+                  disabled={isReadOnly || isFileBacked || !provider}
                 >
                   <SelectTrigger
                     className={cn(
                       "w-full",
-                      isReadOnly && "opacity-70 cursor-not-allowed",
+                      (isReadOnly || isFileBacked) &&
+                        "opacity-70 cursor-not-allowed",
                     )}
                   >
                     <SelectValue

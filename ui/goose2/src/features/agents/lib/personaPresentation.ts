@@ -13,7 +13,7 @@ export function getPersonaSource(persona: Persona): PersonaSource {
 }
 
 export function isPersonaReadOnly(persona: Persona): boolean {
-  return getPersonaSource(persona) !== "custom";
+  return getPersonaSource(persona) === "builtin";
 }
 
 export function getPersonaInitials(displayName: string): string {
