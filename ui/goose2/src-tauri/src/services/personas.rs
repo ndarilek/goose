@@ -397,10 +397,10 @@ impl PersonaStore {
             frontmatter.avatar = avatar.clone();
         }
         if let Some(provider) = &req.provider {
-            frontmatter.provider = Some(provider.clone());
+            frontmatter.provider = provider.clone();
         }
         if let Some(model) = &req.model {
-            frontmatter.model = Some(model.clone());
+            frontmatter.model = model.clone();
         }
 
         let current_system_prompt = if current_body.is_empty() {
@@ -539,15 +539,33 @@ impl PersonaStore {
             persona.system_prompt = prompt;
         }
         if let Some(provider) = req.provider {
-            persona.provider = Some(provider);
+            persona.provider = provider;
         }
         if let Some(model) = req.model {
-            persona.model = Some(model);
+            persona.model = model;
         }
         persona.updated_at = chrono::Utc::now().to_rfc3339();
 
         let updated = persona.clone();
         Ok(updated)
+    }
+
+    fn is_local_avatar_referenced(filename: &str, personas: &[Persona]) -> bool {
+        personas.iter().any(|persona| {
+            matches!(
+                &persona.avatar,
+                Some(Avatar::Local(candidate)) if candidate == filename
+            )
+        })
+    }
+
+    fn delete_local_avatar_if_unreferenced(filename: &str, personas: &[Persona]) {
+        if Self::is_local_avatar_referenced(filename, personas) {
+            return;
+        }
+
+        let path = Self::avatars_dir().join(filename);
+        let _ = std::fs::remove_file(path);
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
@@ -558,6 +576,11 @@ impl PersonaStore {
             .find(|p| p.id == id)
             .cloned()
             .ok_or_else(|| format!("Persona '{}' not found", id))?;
+
+        let local_avatar_filename = match &persona.avatar {
+            Some(Avatar::Local(filename)) => Some(filename.clone()),
+            _ => None,
+        };
 
         if persona.is_from_disk {
             let path = Self::markdown_persona_path(id)?;
@@ -572,18 +595,13 @@ impl PersonaStore {
                     ));
                 }
             }
-
-            personas.retain(|p| p.id != id);
-            return Ok(());
-        }
-
-        // Clean up local avatar file if present
-        if let Some(Avatar::Local(filename)) = &persona.avatar {
-            let path = Self::avatars_dir().join(filename);
-            let _ = std::fs::remove_file(path);
         }
 
         personas.retain(|p| p.id != id);
+        if let Some(filename) = local_avatar_filename {
+            Self::delete_local_avatar_if_unreferenced(&filename, &personas);
+        }
+
         Ok(())
     }
 

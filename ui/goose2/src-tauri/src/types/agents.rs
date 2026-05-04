@@ -70,6 +70,16 @@ where
     }
 }
 
+fn deserialize_nullable_update_field<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Persona {
@@ -126,10 +136,18 @@ pub struct UpdatePersonaRequest {
     pub avatar: Option<Option<Avatar>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nullable_update_field"
+    )]
+    pub provider: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nullable_update_field"
+    )]
+    pub model: Option<Option<String>>,
 }
 
 #[allow(dead_code)]
@@ -195,6 +213,40 @@ where
     T: Deserialize<'de>,
 {
     Option::<Option<T>>::deserialize(deserializer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdatePersonaRequest;
+
+    #[test]
+    fn update_persona_request_distinguishes_missing_and_null_provider_model() {
+        let missing: UpdatePersonaRequest = serde_json::from_value(serde_json::json!({
+            "displayName": "Scout"
+        }))
+        .unwrap();
+        assert_eq!(missing.provider, None);
+        assert_eq!(missing.model, None);
+
+        let cleared: UpdatePersonaRequest = serde_json::from_value(serde_json::json!({
+            "provider": null,
+            "model": null
+        }))
+        .unwrap();
+        assert_eq!(cleared.provider, Some(None));
+        assert_eq!(cleared.model, Some(None));
+
+        let updated: UpdatePersonaRequest = serde_json::from_value(serde_json::json!({
+            "provider": "goose",
+            "model": "claude-sonnet-4-20250514"
+        }))
+        .unwrap();
+        assert_eq!(updated.provider, Some(Some("goose".to_string())));
+        assert_eq!(
+            updated.model,
+            Some(Some("claude-sonnet-4-20250514".to_string()))
+        );
+    }
 }
 
 pub use super::builtin_personas::builtin_personas;

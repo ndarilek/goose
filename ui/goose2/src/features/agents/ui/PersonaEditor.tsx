@@ -153,13 +153,21 @@ export function PersonaEditor({
       e.preventDefault();
       if (!isValid || isReadOnly) return;
 
-      const data: CreatePersonaRequest | UpdatePersonaRequest = {
-        displayName: displayName.trim(),
-        avatar: avatar ?? undefined,
-        systemPrompt: systemPrompt.trim(),
-        provider: provider || undefined,
-        model: model.trim() || undefined,
-      };
+      const data: CreatePersonaRequest | UpdatePersonaRequest = isEditing
+        ? {
+            displayName: displayName.trim(),
+            avatar,
+            systemPrompt: systemPrompt.trim(),
+            provider: provider || null,
+            model: model.trim() || null,
+          }
+        : {
+            displayName: displayName.trim(),
+            avatar: avatar ?? undefined,
+            systemPrompt: systemPrompt.trim(),
+            provider: provider || undefined,
+            model: model.trim() || undefined,
+          };
       onSave(data);
     },
     [
@@ -171,6 +179,7 @@ export function PersonaEditor({
       provider,
       model,
       onSave,
+      isEditing,
     ],
   );
 

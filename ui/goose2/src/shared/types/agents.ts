@@ -53,8 +53,8 @@ export interface UpdatePersonaRequest {
   displayName?: string;
   avatar?: Avatar | null;
   systemPrompt?: string;
-  provider?: ProviderType;
-  model?: string;
+  provider?: ProviderType | null;
+  model?: string | null;
 }
 
 // Agent types
