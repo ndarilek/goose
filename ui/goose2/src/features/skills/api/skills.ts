@@ -173,7 +173,7 @@ export async function exportSkill(
     type: SKILL_SOURCE_TYPE,
     path,
   });
-  return { contents: response.json, filename: response.filename };
+  return { contents: response.contents, filename: response.filename };
 }
 
 export async function importSkills(

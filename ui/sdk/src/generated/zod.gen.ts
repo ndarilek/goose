@@ -712,7 +712,7 @@ export const zExportSourceRequest = z.object({
 });
 
 export const zExportSourceResponse = z.object({
-    json: z.string(),
+    contents: z.string(),
     filename: z.string()
 });
 

@@ -27,6 +27,7 @@ import type { SkillViewInfo } from "../lib/skillCategories";
 
 interface SkillDetailPageProps {
   skill: SkillViewInfo | null;
+  statusBanner?: ReactNode;
   onBack: () => void;
   onEdit: (skill: SkillInfo) => void;
   onCopyFile: (skill: SkillInfo) => void;
@@ -63,6 +64,7 @@ function SkillHeaderActionButton({
 
 export function SkillDetailPage({
   skill,
+  statusBanner,
   onBack,
   onEdit,
   onCopyFile,
@@ -182,6 +184,8 @@ export function SkillDetailPage({
           actionsClassName="gap-2"
         />
       </div>
+
+      {statusBanner}
 
       <PageColumns
         defaultSidebarSize={28}

@@ -75,6 +75,9 @@
     "source": "Source",
     "startChat": "Start a chat with {{name}}",
     "startChatShort": "Start a chat",
+    "retryRefresh": "Retry",
+    "staleSkillsDescription": "Showing the last loaded skills.",
+    "staleSkillsTitle": "Couldn't refresh skills",
     "title": "Skills",
     "useInChat": "Use in chat"
   }

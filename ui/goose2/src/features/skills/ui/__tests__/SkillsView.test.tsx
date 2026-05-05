@@ -257,6 +257,57 @@ describe("SkillsView", () => {
     secondLoad.resolve(mockSkills);
   });
 
+  it("keeps cached skills visible and shows a retry banner when refresh fails", async () => {
+    listSkills
+      .mockResolvedValueOnce(mockSkills)
+      .mockRejectedValueOnce(new Error("offline"));
+    const { unmount } = render(<SkillsView />);
+
+    await screen.findByText("code-review");
+    unmount();
+
+    render(<SkillsView />);
+
+    expect(screen.getByText("code-review")).toBeInTheDocument();
+    expect(screen.getByText("test-writer")).toBeInTheDocument();
+    await screen.findByText("Couldn't refresh skills");
+    expect(
+      screen.getByText("Showing the last loaded skills."),
+    ).toBeInTheDocument();
+  });
+
+  it("clears the stale skills banner after retry refreshes successfully", async () => {
+    const refreshedSkills: SkillInfo[] = [
+      {
+        ...mockSkills[2],
+        id: "project:/tmp/alpha/.goose/skills/refreshed-skill",
+        name: "refreshed-skill",
+        path: "/tmp/alpha/.goose/skills/refreshed-skill",
+        fileLocation: "/tmp/alpha/.goose/skills/refreshed-skill/SKILL.md",
+      },
+    ];
+    listSkills
+      .mockResolvedValueOnce(mockSkills)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(refreshedSkills);
+    const user = userEvent.setup();
+    const { unmount } = render(<SkillsView />);
+
+    await screen.findByText("code-review");
+    unmount();
+
+    render(<SkillsView />);
+    await screen.findByText("Couldn't refresh skills");
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await screen.findByText("refreshed-skill");
+    expect(
+      screen.queryByText("Couldn't refresh skills"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("code-review")).not.toBeInTheDocument();
+  });
+
   it("matches saved project working directories with trailing separators", async () => {
     mockProjects = [
       {

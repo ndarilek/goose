@@ -1722,16 +1722,16 @@
     "ExportSourceResponse": {
       "type": "object",
       "properties": {
-        "json": {
+        "contents": {
           "type": "string",
-          "description": "Canonical source contents. The field remains `json` for wire compatibility."
+          "description": "Canonical source contents."
         },
         "filename": {
           "type": "string"
         }
       },
       "required": [
-        "json",
+        "contents",
         "filename"
       ],
       "x-side": "agent",

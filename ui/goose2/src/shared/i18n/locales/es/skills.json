@@ -75,6 +75,9 @@
     "source": "Origen",
     "startChat": "Iniciar un chat con {{name}}",
     "startChatShort": "Iniciar un chat",
+    "retryRefresh": "Reintentar",
+    "staleSkillsDescription": "Mostrando las últimas skills cargadas.",
+    "staleSkillsTitle": "No se pudieron actualizar las skills",
     "title": "Skills",
     "useInChat": "Usar en chat"
   }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Upload } from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useProjectStore } from "@/features/projects/stores/projectStore";
 import { Button } from "@/shared/ui/button";
@@ -78,6 +78,47 @@ interface SkillsViewProps {
   onStartChatWithSkill?: (skill: SkillInfo, projectId?: string | null) => void;
 }
 
+interface StaleSkillsBannerProps {
+  loading: boolean;
+  onRetry: () => void;
+}
+
+function StaleSkillsBanner({ loading, onRetry }: StaleSkillsBannerProps) {
+  const { t } = useTranslation(["skills"]);
+
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border-soft bg-muted/35 px-3 py-2.5 text-sm"
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <AlertTriangle
+          aria-hidden="true"
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+        />
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-foreground">
+            {t("view.staleSkillsTitle")}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {t("view.staleSkillsDescription")}
+          </p>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline-flat"
+        size="xs"
+        onClick={onRetry}
+        disabled={loading}
+        leftIcon={<RefreshCw aria-hidden="true" />}
+      >
+        {t("view.retryRefresh")}
+      </Button>
+    </div>
+  );
+}
+
 export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
   const { t } = useTranslation(["skills", "common"]);
   const projects = useProjectStore((state) => state.projects);
@@ -100,12 +141,14 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
     () => initialCachedSkills ?? [],
   );
   const [loading, setLoading] = useState(initialCachedSkills === null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [deletingSkill, setDeletingSkill] = useState<SkillInfo | null>(null);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [expandedSectionIds, setExpandedSectionIds] = useState<string[]>([]);
+  const hasLoadedSkillsRef = useRef(initialCachedSkills !== null);
   const loadRequestIdRef = useRef(0);
 
-  const loadSkills = useCallback(async (): Promise<SkillViewInfo[]> => {
+  const loadSkills = useCallback(async (): Promise<SkillViewInfo[] | null> => {
     const requestId = loadRequestIdRef.current + 1;
     loadRequestIdRef.current = requestId;
     const requestProjectDirsKey = projectDirsKey;
@@ -119,15 +162,21 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
       const nextSkills = withInferredSkillCategories(
         hydrateProjectNames(result, projects),
       );
+      hasLoadedSkillsRef.current = true;
       cachedProjectDirsKey = requestProjectDirsKey;
       cachedSkills = nextSkills;
       setSkills(nextSkills);
+      setRefreshFailed(false);
       return nextSkills;
     } catch {
       if (loadRequestIdRef.current === requestId) {
-        toast.error(t("view.loadError"));
+        if (hasLoadedSkillsRef.current) {
+          setRefreshFailed(true);
+        } else {
+          toast.error(t("view.loadError"));
+        }
       }
-      return [];
+      return null;
     } finally {
       if (loadRequestIdRef.current === requestId) {
         setLoading(false);
@@ -201,11 +250,13 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
     if (!deletingSkill) return;
     try {
       await deleteSkill(deletingSkill.path);
-      await loadSkills();
+      const refreshedSkills = await loadSkills();
       if (activeSkillId === deletingSkill.id) {
         setActiveSkillId(null);
       }
-      toast.success(t("view.deleteSuccess", { name: deletingSkill.name }));
+      if (refreshedSkills) {
+        toast.success(t("view.deleteSuccess", { name: deletingSkill.name }));
+      }
     } catch {
       toast.error(t("view.deleteError"));
     }
@@ -232,8 +283,10 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
 
       try {
         await createSkill(duplicateName, skill.description, skill.instructions);
-        await loadSkills();
-        toast.success(t("view.duplicated", { name: duplicateName }));
+        const refreshedSkills = await loadSkills();
+        if (refreshedSkills) {
+          toast.success(t("view.duplicated", { name: duplicateName }));
+        }
       } catch {
         toast.error(t("view.duplicateError"));
       }
@@ -263,7 +316,7 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
       const refreshedSkills = await loadSkills();
       if (
         savedSkill &&
-        refreshedSkills.some((skill) => skill.id === savedSkill.id)
+        refreshedSkills?.some((skill) => skill.id === savedSkill.id)
       ) {
         setActiveSkillId(savedSkill.id);
       }
@@ -272,7 +325,8 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
   );
 
   const refreshSkills = useCallback(async () => {
-    await loadSkills();
+    const refreshedSkills = await loadSkills();
+    return refreshedSkills !== null;
   }, [loadSkills]);
 
   const {
@@ -301,11 +355,16 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
     />
   );
 
+  const staleSkillsBanner = refreshFailed ? (
+    <StaleSkillsBanner loading={loading} onRetry={refreshSkills} />
+  ) : null;
+
   if (activeSkill) {
     return (
       <>
         <SkillDetailPage
           skill={activeSkill}
+          statusBanner={staleSkillsBanner}
           onBack={() => setActiveSkillId(null)}
           onEdit={handleEdit}
           onCopyFile={handleCopyFile}
@@ -361,6 +420,8 @@ export function SkillsView({ onStartChatWithSkill }: SkillsViewProps) {
         dropHandlers={dropHandlers}
         isDragOver={isDragOver}
       />
+
+      {staleSkillsBanner}
 
       {filteredSkills.length > 0 ? (
         <SkillsListSections

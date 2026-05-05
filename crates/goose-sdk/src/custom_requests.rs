@@ -755,8 +755,8 @@ pub struct ExportSourceRequest {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSourceResponse {
-    /// Canonical source contents. The field remains `json` for wire compatibility.
-    pub json: String,
+    /// Canonical source contents.
+    pub contents: String,
     pub filename: String,
 }
 

@@ -231,7 +231,8 @@ export function buildInitScript(options?: {
             const path = message.params?.path ?? "/mock/.agents/skills/skill";
             const name = String(path).split("/").filter(Boolean).at(-1) ?? "skill";
             return jsonRpcResult(message.id, {
-              json: "---\\nname: " + name + "\\ndescription: Mock skill\\n---\\n\\nMock instructions\\n",
+              contents:
+                "---\\nname: " + name + "\\ndescription: Mock skill\\n---\\n\\nMock instructions\\n",
               filename: "SKILL.md",
             });
           }

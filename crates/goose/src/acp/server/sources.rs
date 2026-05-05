@@ -50,8 +50,8 @@ impl GooseAcpAgent {
         &self,
         req: ExportSourceRequest,
     ) -> Result<ExportSourceResponse, sacp::Error> {
-        let (json, filename) = crate::sources::export_source(req.source_type, &req.path)?;
-        Ok(ExportSourceResponse { json, filename })
+        let (contents, filename) = crate::sources::export_source(req.source_type, &req.path)?;
+        Ok(ExportSourceResponse { contents, filename })
     }
 
     pub(super) async fn on_import_sources(

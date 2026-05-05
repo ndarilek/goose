@@ -3,6 +3,7 @@ use crate::types::agents::{
 };
 use log::warn;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
@@ -22,6 +23,8 @@ struct MarkdownFrontmatter {
     provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(default, flatten)]
+    extra: BTreeMap<String, serde_yaml::Value>,
 }
 
 impl PersonaStore {
@@ -364,6 +367,7 @@ impl PersonaStore {
             avatar: persona.avatar.clone(),
             provider: persona.provider.clone(),
             model: persona.model.clone(),
+            extra: BTreeMap::new(),
         }
     }
 
@@ -399,8 +403,15 @@ impl PersonaStore {
         req: &UpdatePersonaRequest,
     ) -> Result<Persona, String> {
         let path = Self::markdown_persona_path(id)?;
+        Self::update_markdown_persona_file_at_path(&path, req)
+    }
+
+    fn update_markdown_persona_file_at_path(
+        path: &Path,
+        req: &UpdatePersonaRequest,
+    ) -> Result<Persona, String> {
         let content =
-            std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
         let (yaml_str, current_body) = Self::split_markdown_persona(&content)?;
 
         let original_frontmatter: MarkdownFrontmatter = serde_yaml::from_str(yaml_str)
@@ -437,10 +448,10 @@ impl PersonaStore {
         };
         let next_content = Self::markdown_from_parts(&frontmatter, &body)?;
 
-        std::fs::write(&path, next_content)
+        std::fs::write(path, next_content)
             .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))?;
 
-        Self::parse_markdown_persona(&path)
+        Self::parse_markdown_persona(path)
     }
 
     fn markdown_persona_path(id: &str) -> Result<PathBuf, String> {
@@ -536,7 +547,12 @@ impl PersonaStore {
             .ok_or_else(|| format!("Persona '{}' not found", id))?;
 
         if persona.is_from_disk {
-            let updated = Self::update_markdown_persona_file(id, &req)?;
+            let updated = match &persona.source_path {
+                Some(source_path) => {
+                    Self::update_markdown_persona_file_at_path(Path::new(source_path), &req)?
+                }
+                None => Self::update_markdown_persona_file(id, &req)?,
+            };
             *persona = updated.clone();
             return Ok(updated);
         }

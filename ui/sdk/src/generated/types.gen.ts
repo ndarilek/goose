@@ -737,9 +737,9 @@ export type ExportSourceRequest = {
 
 export type ExportSourceResponse = {
     /**
-     * Canonical source contents. The field remains `json` for wire compatibility.
+     * Canonical source contents.
      */
-    json: string;
+    contents: string;
     filename: string;
 };
 

@@ -1,5 +1,8 @@
-use super::PersonaStore;
-use crate::types::agents::{Avatar, Persona};
+use super::{MarkdownFrontmatter, PersonaStore};
+use crate::types::agents::{Avatar, Persona, UpdatePersonaRequest};
+use std::fs;
+use std::sync::Mutex;
+use tempfile::tempdir;
 
 fn make_persona(id: &str, avatar: Option<Avatar>) -> Persona {
     Persona {
@@ -55,4 +58,72 @@ fn local_avatar_reference_check_counts_remaining_personas() {
         "missing.png",
         &personas
     ));
+}
+
+#[test]
+fn markdown_frontmatter_preserves_unknown_fields_when_serialized() {
+    let raw = r#"
+name: Reviewer
+description: Reviews code changes
+provider: openai
+tags:
+  - review
+  - code
+owner: Morgan
+experimental: true
+"#;
+    let mut frontmatter: MarkdownFrontmatter = serde_yaml::from_str(raw).unwrap();
+
+    frontmatter.name = "Renamed Reviewer".to_string();
+    frontmatter.provider = None;
+
+    let markdown =
+        PersonaStore::markdown_from_parts(&frontmatter, "Review the diff carefully.").unwrap();
+
+    assert!(markdown.contains("name: Renamed Reviewer"));
+    assert!(!markdown.contains("provider:"));
+    assert!(markdown.contains("tags:"));
+    assert!(markdown.contains("- review"));
+    assert!(markdown.contains("owner: Morgan"));
+    assert!(markdown.contains("experimental: true"));
+}
+
+#[test]
+fn update_markdown_persona_clears_provider_model_through_file_round_trip() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("scout.md");
+    fs::write(
+        &path,
+        "---\nname: Scout\nprovider: openai\nmodel: gpt-4.1\n---\n\nYou are helpful.\n",
+    )
+    .expect("write persona");
+    let persona = PersonaStore::parse_markdown_persona(&path).expect("parse persona");
+    let store = PersonaStore {
+        personas: Mutex::new(vec![persona]),
+    };
+
+    let updated = store
+        .update(
+            "md-scout",
+            UpdatePersonaRequest {
+                display_name: None,
+                avatar: None,
+                system_prompt: None,
+                provider: Some(None),
+                model: Some(None),
+            },
+        )
+        .expect("update persona");
+
+    assert_eq!(updated.provider, None);
+    assert_eq!(updated.model, None);
+    let contents = fs::read_to_string(&path).expect("read updated persona");
+    assert!(!contents.contains("provider:"));
+    assert!(!contents.contains("model:"));
+
+    let reloaded = PersonaStore::parse_markdown_persona(&path).expect("reload persona");
+    assert_eq!(reloaded.provider, None);
+    assert_eq!(reloaded.model, None);
+    assert_eq!(store.get("md-scout").unwrap().provider, None);
+    assert_eq!(store.get("md-scout").unwrap().model, None);
 }

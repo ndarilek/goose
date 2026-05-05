@@ -4,7 +4,7 @@ import { useFileImportZone } from "@/shared/hooks/useFileImportZone";
 import { copyFileToClipboard, saveFileCopy } from "@/shared/api/system";
 import { importSkills, type SkillInfo } from "../api/skills";
 
-export function useSkillImportExport(onAfterImport: () => Promise<void>) {
+export function useSkillImportExport(onAfterImport: () => Promise<boolean>) {
   const { t } = useTranslation(["skills"]);
 
   const handleCopyFile = async (skill: SkillInfo) => {
@@ -30,8 +30,10 @@ export function useSkillImportExport(onAfterImport: () => Promise<void>) {
   const handleImport = async (fileBytes: number[], fileName: string) => {
     try {
       await importSkills(fileBytes, fileName);
-      await onAfterImport();
-      toast.success(t("view.importSuccess"));
+      const refreshed = await onAfterImport();
+      if (refreshed) {
+        toast.success(t("view.importSuccess"));
+      }
     } catch {
       toast.error(t("view.importError"));
     }
