@@ -1,9 +1,9 @@
-use crate::config::GooseMode;
 use crate::config::paths::Paths;
-use crate::conversation::Conversation;
+use crate::config::GooseMode;
 use crate::conversation::message::Message;
+use crate::conversation::Conversation;
 use crate::model::ModelConfig;
-use crate::providers::base::{MSG_COUNT_FOR_SESSION_NAME_GENERATION, Provider};
+use crate::providers::base::{Provider, MSG_COUNT_FOR_SESSION_NAME_GENERATION};
 use crate::recipe::Recipe;
 use crate::session::extension_data::ExtensionData;
 use anyhow::Result;
@@ -750,7 +750,7 @@ impl SessionStorage {
             INSERT OR IGNORE INTO threads (id, name, user_set_name, working_dir, created_at, updated_at, metadata_json)
             SELECT s.id,
                    CASE WHEN s.name = '' OR s.name IS NULL THEN 'New Chat' ELSE s.name END,
-                   s.user_set_name,
+                   CASE WHEN s.name = '' OR s.name IS NULL THEN FALSE ELSE s.user_set_name END,
                    s.working_dir,
                    s.created_at,
                    s.updated_at,
@@ -772,8 +772,6 @@ impl SessionStorage {
             JOIN sessions s ON s.id = m.session_id
             WHERE s.session_type IN ('user', 'acp')
               AND s.thread_id IS NULL
-              AND EXISTS (SELECT 1 FROM messages m2 WHERE m2.session_id = s.id)
-            ORDER BY m.created_timestamp, m.id
             "#,
         )
         .execute(&mut **tx)
