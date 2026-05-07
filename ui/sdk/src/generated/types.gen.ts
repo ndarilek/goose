@@ -747,6 +747,11 @@ export type CreateSourceRequest = {
     name: string;
     description: string;
     content: string;
+    /**
+     * Source-type-specific structured metadata. For agents this can include
+     * optional provider/model/avatar fields written to frontmatter.
+     */
+    metadata?: unknown;
     global: boolean;
     /**
      * Absolute path to the project root. Required when `global` is false.
@@ -809,6 +814,11 @@ export type SourceEntry = {
     properties?: {
         [key: string]: unknown;
     };
+    /**
+     * Source-type-specific structured metadata. For agents this includes
+     * optional provider/model/avatar fields parsed from frontmatter.
+     */
+    metadata?: unknown;
 };
 
 /**
@@ -842,6 +852,11 @@ export type UpdateSourceRequest = {
     name: string;
     description: string;
     content: string;
+    /**
+     * Source-type-specific structured metadata. For agents this can include
+     * optional provider/model/avatar fields written to frontmatter.
+     */
+    metadata?: unknown;
     /**
      * When `Some`, replaces all stored properties on the source. When
      * `None` (or omitted), the source's existing properties are

@@ -860,6 +860,10 @@ pub struct SourceEntry {
     /// preferredProvider for projects). Stored in the frontmatter.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub properties: std::collections::HashMap<String, serde_json::Value>,
+    /// Source-type-specific structured metadata. For agents this includes
+    /// optional provider/model/avatar fields parsed from frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 impl SourceEntry {
@@ -884,6 +888,10 @@ pub struct CreateSourceRequest {
     pub name: String,
     pub description: String,
     pub content: String,
+    /// Source-type-specific structured metadata. For agents this can include
+    /// optional provider/model/avatar fields written to frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
     pub global: bool,
     /// Absolute path to the project root. Required when `global` is false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -941,6 +949,10 @@ pub struct UpdateSourceRequest {
     pub name: String,
     pub description: String,
     pub content: String,
+    /// Source-type-specific structured metadata. For agents this can include
+    /// optional provider/model/avatar fields written to frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
     /// When `Some`, replaces all stored properties on the source. When
     /// `None` (or omitted), the source's existing properties are
     /// preserved. Callers that don't model the full property bag (e.g.

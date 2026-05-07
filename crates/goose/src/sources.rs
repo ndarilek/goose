@@ -9,11 +9,14 @@ use crate::skills::{
     validate_skill_name,
 };
 use agent_client_protocol::Error;
+use base64::Engine;
 use fs_err as fs;
 use goose_sdk::custom_requests::{SourceEntry, SourceType};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 pub fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
     content: &str,
@@ -32,7 +35,7 @@ pub fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
 
 fn require_mutable_type(source_type: SourceType) -> Result<(), Error> {
     match source_type {
-        SourceType::Skill | SourceType::Project => Ok(()),
+        SourceType::Skill | SourceType::Project | SourceType::Agent => Ok(()),
         other => Err(Error::invalid_params().data(format!(
             "Source type '{other}' is not supported for mutation."
         ))),
@@ -44,6 +47,7 @@ fn require_listable_type(source_type: Option<SourceType>) -> Result<SourceType, 
         SourceType::Skill => Ok(SourceType::Skill),
         SourceType::BuiltinSkill => Ok(SourceType::BuiltinSkill),
         SourceType::Project => Ok(SourceType::Project),
+        SourceType::Agent => Ok(SourceType::Agent),
         other => Err(Error::invalid_params().data(format!(
             "Source type '{}' is not supported for listing.",
             other
@@ -184,6 +188,7 @@ fn project_entry_from_file(file: &Path) -> Option<SourceEntry> {
         global: true,
         supporting_files: Vec::new(),
         properties,
+        metadata: None,
     })
 }
 
@@ -279,6 +284,7 @@ fn skill_source_entry(
         global,
         supporting_files: Vec::new(),
         properties,
+        metadata: None,
     }
 }
 
@@ -287,7 +293,435 @@ fn builtin_skill_entry(mut source: SourceEntry) -> SourceEntry {
     source.path = format!("builtin://skills/{}", source.name);
     source.global = true;
     source.supporting_files.clear();
+    source.metadata = None;
     source
+}
+
+fn source_entry(
+    source_type: SourceType,
+    name: &str,
+    description: &str,
+    content: &str,
+    path: &Path,
+    global: bool,
+    metadata: Option<Value>,
+) -> SourceEntry {
+    SourceEntry {
+        source_type,
+        name: name.to_string(),
+        description: description.to_string(),
+        content: content.to_string(),
+        path: path.to_string_lossy().to_string(),
+        global,
+        supporting_files: Vec::new(),
+        properties: HashMap::new(),
+        metadata,
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct AgentFrontmatter {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    avatar: Option<String>,
+}
+
+fn agent_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
+    if global {
+        dirs::home_dir()
+            .map(|home| home.join(".agents").join("agents"))
+            .ok_or_else(|| Error::internal_error().data("Could not determine home directory"))
+    } else {
+        let project_dir = project_dir.ok_or_else(|| {
+            Error::invalid_params().data("projectDir is required when global is false")
+        })?;
+        if project_dir.trim().is_empty() {
+            return Err(
+                Error::invalid_params().data("projectDir must not be empty when global is false")
+            );
+        }
+        Ok(Path::new(project_dir).join(".agents").join("agents"))
+    }
+}
+
+fn validate_agent_name(name: &str) -> Result<(), Error> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(Error::invalid_params().data("Agent name must not be empty"));
+    }
+    if trimmed.len() > 80 {
+        return Err(Error::invalid_params().data(format!(
+            "Invalid agent name \"{}\". Names must be at most 80 characters.",
+            name
+        )));
+    }
+    if trimmed.chars().any(|ch| matches!(ch, '/' | '\\')) {
+        return Err(Error::invalid_params().data(format!(
+            "Invalid agent name \"{}\". Names must not contain path separators.",
+            name
+        )));
+    }
+    Ok(())
+}
+
+fn slugify_agent_name(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let mut collapsed = String::with_capacity(slug.len());
+    let mut previous_hyphen = false;
+    for ch in slug.chars() {
+        if ch == '-' {
+            if !previous_hyphen {
+                collapsed.push('-');
+            }
+            previous_hyphen = true;
+        } else {
+            collapsed.push(ch);
+            previous_hyphen = false;
+        }
+    }
+    let trimmed = collapsed.trim_matches('-');
+    if trimmed.is_empty() {
+        "agent".to_string()
+    } else {
+        trimmed
+            .chars()
+            .take(64)
+            .collect::<String>()
+            .trim_end_matches('-')
+            .to_string()
+    }
+}
+
+fn agent_metadata_from_value(
+    metadata: Option<Value>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(Value::Object(map)) = metadata else {
+        return (None, None, None);
+    };
+    let read_string = |key: &str| {
+        map.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    (
+        read_string("provider"),
+        read_string("model"),
+        read_string("avatar"),
+    )
+}
+
+fn agent_avatars_dir() -> Result<PathBuf, Error> {
+    Ok(dirs::home_dir()
+        .ok_or_else(|| Error::internal_error().data("Could not determine home directory"))?
+        .join(".goose")
+        .join("avatars")
+        .join("agents"))
+}
+
+fn normalize_agent_avatar(avatar: Option<String>) -> Option<String> {
+    let avatar = avatar?.trim().to_string();
+    if avatar.is_empty() {
+        return None;
+    }
+
+    let persisted = if avatar.starts_with("data:") {
+        persist_data_url_avatar(&avatar)
+    } else if avatar.starts_with("file://") {
+        persist_file_url_avatar(&avatar)
+    } else {
+        return Some(avatar);
+    };
+
+    match persisted {
+        Ok(path) => Some(path),
+        Err(err) => {
+            warn!("Failed to persist agent avatar: {:?}", err);
+            Some(avatar)
+        }
+    }
+}
+
+fn persist_data_url_avatar(data_url: &str) -> Result<String, Error> {
+    let (header, encoded) = data_url
+        .split_once(',')
+        .ok_or_else(|| Error::invalid_params().data("Invalid data URL avatar"))?;
+    if !header.ends_with(";base64") {
+        return Err(Error::invalid_params().data("Avatar data URL must be base64 encoded"));
+    }
+
+    let mime_type = header
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .unwrap_or("image/png");
+    let extension = match mime_type {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "png",
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| Error::invalid_params().data(format!("Invalid avatar data URL: {e}")))?;
+    let dir = agent_avatars_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        Error::internal_error().data(format!("Failed to create avatar directory: {e}"))
+    })?;
+    let path = dir.join(format!("{}.{}", uuid::Uuid::now_v7(), extension));
+    fs::write(&path, bytes)
+        .map_err(|e| Error::internal_error().data(format!("Failed to write avatar file: {e}")))?;
+    Ok(format!("file://{}", path.to_string_lossy()))
+}
+
+fn persist_file_url_avatar(file_url: &str) -> Result<String, Error> {
+    let url = url::Url::parse(file_url)
+        .map_err(|e| Error::invalid_params().data(format!("Invalid avatar file URL: {e}")))?;
+    let source = url
+        .to_file_path()
+        .map_err(|_| Error::invalid_params().data("Invalid avatar file URL path"))?;
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+
+    let dir = agent_avatars_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        Error::internal_error().data(format!("Failed to create avatar directory: {e}"))
+    })?;
+    let path = dir.join(format!("{}.{}", uuid::Uuid::now_v7(), extension));
+    fs::copy(&source, &path)
+        .map_err(|e| Error::internal_error().data(format!("Failed to copy avatar file: {e}")))?;
+    Ok(format!("file://{}", path.to_string_lossy()))
+}
+
+fn agent_metadata_json(
+    provider: Option<String>,
+    model: Option<String>,
+    avatar: Option<String>,
+) -> Option<Value> {
+    let mut map = Map::new();
+    if let Some(provider) = provider.filter(|value| !value.trim().is_empty()) {
+        map.insert("provider".to_string(), Value::String(provider));
+    }
+    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+        map.insert("model".to_string(), Value::String(model));
+    }
+    if let Some(avatar) = avatar.filter(|value| !value.trim().is_empty()) {
+        map.insert("avatar".to_string(), Value::String(avatar));
+    }
+    (!map.is_empty()).then_some(Value::Object(map))
+}
+
+fn build_agent_md(
+    name: &str,
+    description: &str,
+    content: &str,
+    metadata: Option<Value>,
+) -> Result<String, Error> {
+    let (provider, model, avatar) = agent_metadata_from_value(metadata);
+    let frontmatter = AgentFrontmatter {
+        name: name.to_string(),
+        description: description.to_string(),
+        provider,
+        model,
+        avatar: normalize_agent_avatar(avatar),
+    };
+    let yaml = serde_yaml::to_string(&frontmatter)
+        .map_err(|e| Error::internal_error().data(format!("Failed to serialize agent: {e}")))?;
+    let mut md = format!("---\n{}---\n", yaml);
+    if !content.is_empty() {
+        md.push('\n');
+        md.push_str(content);
+        md.push('\n');
+    }
+    Ok(md)
+}
+
+fn parse_agent_frontmatter(raw: &str) -> Result<(AgentFrontmatter, String), Error> {
+    parse_frontmatter::<AgentFrontmatter>(raw)
+        .map_err(|e| Error::invalid_params().data(format!("Invalid agent frontmatter: {e}")))?
+        .ok_or_else(|| Error::invalid_params().data("Agent file is missing frontmatter"))
+}
+
+fn agent_source_entry(path: &Path, global: bool) -> Result<SourceEntry, Error> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| Error::internal_error().data(format!("Failed to read agent file: {e}")))?;
+    let (frontmatter, content) = parse_agent_frontmatter(&raw)?;
+    Ok(source_entry(
+        SourceType::Agent,
+        &frontmatter.name,
+        &frontmatter.description,
+        &content,
+        path,
+        global,
+        agent_metadata_json(frontmatter.provider, frontmatter.model, frontmatter.avatar),
+    ))
+}
+
+fn canonicalize_or_original(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_global_agent_file(path: &Path) -> bool {
+    let canonical_path = canonicalize_or_original(path);
+    let mut global_roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        global_roots.push(home.join(".agents").join("agents"));
+        global_roots.push(home.join(".goose").join("agents"));
+        global_roots.push(home.join(".claude").join("agents"));
+    }
+    global_roots.push(Paths::config_dir().join("agents"));
+
+    global_roots
+        .into_iter()
+        .any(|root| canonical_path.starts_with(canonicalize_or_original(&root)))
+}
+
+fn resolve_agent_file(path: &str) -> Result<PathBuf, Error> {
+    if path.is_empty() {
+        return Err(Error::invalid_params().data("Source path must not be empty"));
+    }
+
+    let canonical_file = Path::new(path)
+        .canonicalize()
+        .map_err(|_| Error::invalid_params().data(format!("Source \"{}\" not found", path)))?;
+
+    let parent_name = canonical_file
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let grandparent_name = canonical_file
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let in_agent_dir = parent_name == Some("agents")
+        && matches!(
+            grandparent_name,
+            Some(".goose") | Some(".claude") | Some(".agents")
+        );
+
+    if !canonical_file.is_file()
+        || canonical_file.extension().and_then(|ext| ext.to_str()) != Some("md")
+        || (!in_agent_dir && !is_global_agent_file(&canonical_file))
+    {
+        return Err(Error::invalid_params().data(format!("Source \"{}\" not found", path)));
+    }
+
+    Ok(canonical_file)
+}
+
+fn list_agent_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
+    let mut dirs = Vec::new();
+    if let Some(working_dir) = working_dir {
+        dirs.push((working_dir.join(".agents").join("agents"), false));
+        dirs.push((working_dir.join(".goose").join("agents"), false));
+        dirs.push((working_dir.join(".claude").join("agents"), false));
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        dirs.push((home.join(".agents").join("agents"), true));
+        dirs.push((home.join(".goose").join("agents"), true));
+        dirs.push((home.join(".claude").join("agents"), true));
+    }
+    dirs.push((Paths::config_dir().join("agents"), true));
+    dirs
+}
+
+fn list_agent_sources(project_dir: Option<&str>) -> Vec<SourceEntry> {
+    let working_dir = project_dir
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let mut seen = std::collections::HashSet::new();
+    let mut sources = Vec::new();
+
+    for (dir, global) in list_agent_dirs(working_dir.as_deref()) {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            match agent_source_entry(&path, global) {
+                Ok(source) => {
+                    let key = source.name.to_lowercase();
+                    if seen.insert(key) {
+                        sources.push(source);
+                    }
+                }
+                Err(err) => warn!("Skipping agent source {}: {:?}", path.display(), err),
+            }
+        }
+    }
+
+    sources
+}
+
+fn create_agent_source(
+    name: &str,
+    description: &str,
+    content: &str,
+    metadata: Option<Value>,
+    global: bool,
+    project_dir: Option<&str>,
+) -> Result<SourceEntry, Error> {
+    validate_agent_name(name)?;
+    let base = agent_base_dir(global, project_dir)?;
+    let slug = slugify_agent_name(name);
+    let mut file_path = base.join(format!("{slug}.md"));
+    if file_path.exists() {
+        let mut counter = 2u32;
+        loop {
+            file_path = base.join(format!("{slug}-{counter}.md"));
+            if !file_path.exists() {
+                break;
+            }
+            counter += 1;
+        }
+    }
+
+    fs::create_dir_all(&base).map_err(|e| {
+        Error::internal_error().data(format!("Failed to create source directory: {e}"))
+    })?;
+    let md = build_agent_md(name, description, content, metadata)?;
+    fs::write(&file_path, md)
+        .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
+
+    agent_source_entry(&file_path, global)
+}
+
+fn update_agent_source(
+    path: &str,
+    name: &str,
+    description: &str,
+    content: &str,
+    metadata: Option<Value>,
+) -> Result<SourceEntry, Error> {
+    validate_agent_name(name)?;
+    let file_path = resolve_agent_file(path)?;
+    let global = is_global_agent_file(&file_path);
+    let md = build_agent_md(name, description, content, metadata)?;
+    fs::write(&file_path, md)
+        .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
+
+    agent_source_entry(&file_path, global)
 }
 
 // --- Public CRUD ---
@@ -297,11 +731,15 @@ pub fn create_source(
     name: &str,
     description: &str,
     content: &str,
+    metadata: Option<Value>,
     global: bool,
     project_dir: Option<&str>,
     properties: HashMap<String, serde_json::Value>,
 ) -> Result<SourceEntry, Error> {
     require_mutable_type(source_type)?;
+    if source_type == SourceType::Agent {
+        return create_agent_source(name, description, content, metadata, global, project_dir);
+    }
 
     match source_type {
         SourceType::Skill => {
@@ -365,9 +803,13 @@ pub fn update_source(
     name: &str,
     description: &str,
     content: &str,
+    metadata: Option<Value>,
     properties: Option<HashMap<String, serde_json::Value>>,
 ) -> Result<SourceEntry, Error> {
     require_mutable_type(source_type)?;
+    if source_type == SourceType::Agent {
+        return update_agent_source(path, name, description, content, metadata);
+    }
 
     match source_type {
         SourceType::Skill => {
@@ -479,6 +921,12 @@ pub fn delete_source(source_type: SourceType, path: &str) -> Result<(), Error> {
                 Error::internal_error().data(format!("Failed to delete project: {e}"))
             })?;
         }
+        SourceType::Agent => {
+            let file_path = resolve_agent_file(path)?;
+            fs::remove_file(&file_path).map_err(|e| {
+                Error::internal_error().data(format!("Failed to delete source: {e}"))
+            })?;
+        }
         _ => unreachable!("guarded by require_mutable_type"),
     }
     Ok(())
@@ -564,7 +1012,10 @@ pub fn list_sources(
             SourceType::Project => {
                 sources.extend(read_project_dir()?);
             }
-            SourceType::Recipe | SourceType::Subrecipe | SourceType::Agent => {
+            SourceType::Agent => {
+                sources.extend(list_agent_sources(project_dir));
+            }
+            SourceType::Recipe | SourceType::Subrecipe => {
                 return Err(Error::invalid_params()
                     .data(format!("Source type '{}' listing is not supported.", kind)));
             }
@@ -599,6 +1050,23 @@ pub fn export_source(source_type: SourceType, path: &str) -> Result<(String, Str
                 Error::internal_error().data(format!("Failed to serialize source: {e}"))
             })?;
             let filename = format!("{}.skill.json", name);
+            Ok((json, filename))
+        }
+        SourceType::Agent => {
+            let file_path = resolve_agent_file(path)?;
+            let source = agent_source_entry(&file_path, is_global_agent_file(&file_path))?;
+            let export = serde_json::json!({
+                "version": 1,
+                "type": "agent",
+                "name": source.name,
+                "description": source.description,
+                "content": source.content,
+                "metadata": source.metadata,
+            });
+            let json = serde_json::to_string_pretty(&export).map_err(|e| {
+                Error::internal_error().data(format!("Failed to serialize source: {e}"))
+            })?;
+            let filename = format!("{}.agent.json", slugify_agent_name(&source.name));
             Ok((json, filename))
         }
         SourceType::Project => {
@@ -667,6 +1135,7 @@ pub fn import_sources(
     let source_type = match type_str {
         "skill" => SourceType::Skill,
         "project" => SourceType::Project,
+        "agent" => SourceType::Agent,
         other => {
             return Err(Error::invalid_params()
                 .data(format!("Source type '{}' import is not supported.", other)));
@@ -713,6 +1182,12 @@ pub fn import_sources(
         }
     }
 
+    if source_type == SourceType::Agent {
+        let metadata = value.get("metadata").cloned();
+        return create_agent_source(&name, &description, &content, metadata, global, project_dir)
+            .map(|source| vec![source]);
+    }
+
     match source_type {
         SourceType::Skill => {
             validate_skill_name(&name)?;
@@ -731,6 +1206,7 @@ pub fn import_sources(
                 &final_name,
                 &description,
                 &content,
+                None,
                 global,
                 project_dir,
                 properties,
@@ -753,6 +1229,7 @@ pub fn import_sources(
                 &final_name,
                 &description,
                 &content,
+                None,
                 true, // projects are always global
                 None,
                 properties,
@@ -792,6 +1269,7 @@ mod tests {
             "my-skill",
             "does the thing",
             "step one\nstep two",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -811,6 +1289,7 @@ mod tests {
             "my-skill",
             "now does a different thing",
             "step three",
+            None,
             Some(HashMap::new()),
         )
         .unwrap();
@@ -831,6 +1310,7 @@ mod tests {
             "dup",
             "d",
             "c",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -841,6 +1321,7 @@ mod tests {
             "dup",
             "d",
             "c",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -856,6 +1337,7 @@ mod tests {
             "x",
             "d",
             "c",
+            None,
             false,
             None,
             HashMap::new(),
@@ -877,6 +1359,7 @@ mod tests {
             "portable",
             "describes itself",
             "body goes here",
+            None,
             false,
             Some(project_a.to_str().unwrap()),
             HashMap::new(),
@@ -952,6 +1435,7 @@ mod tests {
             "portable",
             "updated description",
             "updated body",
+            None,
             Some(HashMap::new()),
         )
         .unwrap();
@@ -975,6 +1459,7 @@ mod tests {
             "busy",
             "d",
             "c",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -1007,6 +1492,7 @@ mod tests {
             "no-such-skill",
             "d",
             "c",
+            None,
             Some(HashMap::new()),
         )
         .unwrap_err();
@@ -1102,6 +1588,7 @@ mod tests {
             "x",
             "d",
             "c",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -1115,13 +1602,22 @@ mod tests {
             "x",
             "d",
             "c",
+            None,
             Some(HashMap::new()),
         )
         .unwrap_err();
         assert!(format!("{:?}", err).contains("not supported"));
 
-        let err = update_source(SourceType::Recipe, "x", "x", "d", "c", Some(HashMap::new()))
-            .unwrap_err();
+        let err = update_source(
+            SourceType::Recipe,
+            "x",
+            "x",
+            "d",
+            "c",
+            None,
+            Some(HashMap::new()),
+        )
+        .unwrap_err();
         assert!(format!("{:?}", err).contains("not supported"));
 
         let err = delete_source(SourceType::BuiltinSkill, "builtin://skills/x").unwrap_err();
@@ -1166,6 +1662,7 @@ mod tests {
             "my-dir",
             "orig",
             "body",
+            None,
             false,
             Some(project),
             HashMap::new(),
@@ -1179,6 +1676,7 @@ mod tests {
             "my-dir",
             "new description",
             "new body",
+            None,
             Some(HashMap::new()),
         )
         .unwrap();
@@ -1274,6 +1772,7 @@ mod tests {
             "escaped",
             "new description",
             "new content",
+            None,
             Some(HashMap::new()),
         )
         .unwrap_err();

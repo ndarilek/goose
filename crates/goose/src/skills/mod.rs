@@ -286,6 +286,7 @@ fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<Sourc
         global,
         supporting_files: Vec::new(),
         properties: metadata.metadata,
+        metadata: None,
     })
 }
 

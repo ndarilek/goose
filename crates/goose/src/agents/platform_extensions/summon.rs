@@ -129,6 +129,7 @@ fn parse_agent_content(content: &str, path: &Path) -> Option<SourceEntry> {
         global: false,
         supporting_files: Vec::new(),
         properties: std::collections::HashMap::new(),
+        metadata: None,
     })
 }
 
@@ -176,6 +177,7 @@ fn scan_recipes_from_dir(
                     global: false,
                     supporting_files: Vec::new(),
                     properties: std::collections::HashMap::new(),
+                    metadata: None,
                 });
             }
             Err(e) => {
@@ -604,6 +606,7 @@ impl SummonClient {
                 global: false,
                 supporting_files: Vec::new(),
                 properties: std::collections::HashMap::new(),
+                metadata: None,
             });
         }
     }

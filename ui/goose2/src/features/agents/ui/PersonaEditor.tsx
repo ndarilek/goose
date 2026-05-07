@@ -187,9 +187,6 @@ export function PersonaEditor({
 
   const initials = displayName.charAt(0).toUpperCase() || "?";
 
-  // For new personas, use a temporary ID for the avatar upload
-  const avatarPersonaId = persona?.id ?? "new-persona";
-
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg max-h-[85vh] flex flex-col gap-0 p-0">
@@ -236,7 +233,6 @@ export function PersonaEditor({
                 </AvatarRoot>
               ) : (
                 <AvatarDropZone
-                  personaId={avatarPersonaId}
                   avatar={avatar}
                   onChange={setAvatar}
                   disabled={isReadOnly}

@@ -22,6 +22,7 @@ impl GooseAcpAgent {
             &req.name,
             &req.description,
             &req.content,
+            req.metadata,
             req.global,
             project_dir.as_deref(),
             req.properties,
@@ -51,6 +52,7 @@ impl GooseAcpAgent {
             &req.name,
             &req.description,
             &req.content,
+            req.metadata,
             req.properties,
         )?;
         Ok(UpdateSourceResponse { source })
