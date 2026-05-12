@@ -57,9 +57,13 @@ impl Conversation {
                 (
                     Some(MessageContent::Thinking(ref mut last)),
                     Some(MessageContent::Thinking(new)),
-                ) if message.content.len() == 1 => {
+                ) if message.content.len() == 1
+                    && (new.signature.is_empty()
+                        || last.signature.is_empty()
+                        || new.signature == last.signature) =>
+                {
                     last.thinking.push_str(&new.thinking);
-                    if !new.signature.is_empty() && new.signature != last.signature {
+                    if !new.signature.is_empty() {
                         last.signature = new.signature.clone();
                     }
                 }
@@ -1319,6 +1323,40 @@ mod tests {
                 assert_eq!(t.signature, "sig1");
             }
             other => panic!("expected Thinking, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_push_keeps_distinct_signed_thinking_blocks_separate() {
+        use crate::conversation::message::MessageContent;
+
+        let mut conv = Conversation::empty();
+        conv.push(
+            Message::assistant()
+                .with_thinking("block A", "sig-A")
+                .with_id("turn-1"),
+        );
+        conv.push(
+            Message::assistant()
+                .with_thinking("block B", "sig-B")
+                .with_id("turn-1"),
+        );
+
+        let content = &conv.messages()[0].content;
+        assert_eq!(
+            content.len(),
+            2,
+            "two distinct signed blocks must not coalesce: {:?}",
+            content
+        );
+        match (&content[0], &content[1]) {
+            (MessageContent::Thinking(a), MessageContent::Thinking(b)) => {
+                assert_eq!(a.thinking, "block A");
+                assert_eq!(a.signature, "sig-A");
+                assert_eq!(b.thinking, "block B");
+                assert_eq!(b.signature, "sig-B");
+            }
+            other => panic!("unexpected content shape: {:?}", other),
         }
     }
 
