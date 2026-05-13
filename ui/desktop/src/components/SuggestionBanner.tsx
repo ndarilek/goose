@@ -3,6 +3,7 @@ import { MessageSquarePlus, Inbox, LoaderCircle, X, Check, Share2, Copy } from '
 import { Button } from './ui/button';
 import { getChannelInfo, getSuggestions, sendSuggestion, shareSessionNostr } from '../api/sdk.gen';
 import { toast } from 'react-toastify';
+import type { SuggestionEvent } from '../hooks/useSessionEvents';
 
 interface Suggestion {
   text: string;
@@ -14,6 +15,7 @@ interface Suggestion {
 interface SuggestionBannerProps {
   sessionId: string;
   onAcceptSuggestion: (text: string) => void;
+  setSuggestionHandler: (handler: ((suggestion: SuggestionEvent) => void) | null) => void;
 }
 
 const SENDER_NAME_KEY = 'goose_suggestion_sender_name';
@@ -34,7 +36,7 @@ function saveSenderName(name: string) {
   }
 }
 
-export default function SuggestionBanner({ sessionId, onAcceptSuggestion }: SuggestionBannerProps) {
+export default function SuggestionBanner({ sessionId, onAcceptSuggestion, setSuggestionHandler }: SuggestionBannerProps) {
   const [role, setRole] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -63,27 +65,32 @@ export default function SuggestionBanner({ sessionId, onAcceptSuggestion }: Sugg
     return () => { cancelled = true; };
   }, [sessionId]);
 
-  // For owners, poll for suggestions on mount and every 30s
+  // For owners: fetch existing suggestions once, then listen for new ones via SSE
   useEffect(() => {
     if (role !== 'owner') return;
 
-    const fetchSuggestions = async () => {
-      setIsLoading(true);
-      try {
-        const resp = await getSuggestions({ path: { session_id: sessionId }, throwOnError: false });
+    // One-time fetch for suggestions that arrived while session was closed
+    setIsLoading(true);
+    getSuggestions({ path: { session_id: sessionId }, throwOnError: false })
+      .then((resp) => {
         if (resp.data) {
           setSuggestions(resp.data);
         }
-      } catch {
-      } finally {
-        setIsLoading(false);
-      }
-    };
+      })
+      .catch(() => {})
+      .finally(() => setIsLoading(false));
 
-    fetchSuggestions();
-    const interval = setInterval(fetchSuggestions, 30000);
-    return () => clearInterval(interval);
-  }, [role, sessionId]);
+    // Listen for real-time suggestions via SSE
+    setSuggestionHandler((suggestion: SuggestionEvent) => {
+      setSuggestions((prev) => {
+        // Deduplicate by eventId
+        if (prev.some((s) => s.eventId === suggestion.eventId)) return prev;
+        return [...prev, suggestion];
+      });
+    });
+
+    return () => setSuggestionHandler(null);
+  }, [role, sessionId, setSuggestionHandler]);
 
   const handleSend = useCallback(async () => {
     if (!suggestionText.trim()) return;

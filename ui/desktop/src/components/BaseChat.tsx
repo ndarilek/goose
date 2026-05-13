@@ -120,6 +120,7 @@ export default function BaseChat({
     tokenState,
     notifications: toolCallNotifications,
     onMessageUpdate,
+    setSuggestionHandler,
   } = useChatStream({
     sessionId,
     onStreamFinish,
@@ -495,6 +496,7 @@ export default function BaseChat({
         <SuggestionBanner
           sessionId={sessionId}
           onAcceptSuggestion={(text) => handleSubmit({ msg: `[Suggestion from collaborator]: ${text}`, images: [] })}
+          setSuggestionHandler={setSuggestionHandler}
         />
 
         <div

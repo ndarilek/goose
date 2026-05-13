@@ -6492,6 +6492,39 @@
           },
           {
             "type": "object",
+            "description": "A suggestion received from a collaborator via Nostr channel.",
+            "required": [
+              "text",
+              "event_id",
+              "timestamp",
+              "type"
+            ],
+            "properties": {
+              "event_id": {
+                "type": "string"
+              },
+              "sender_name": {
+                "type": "string",
+                "nullable": true
+              },
+              "text": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "Suggestion"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "required": [
               "type"
             ],

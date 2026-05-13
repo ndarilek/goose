@@ -450,13 +450,10 @@ impl NostrSuggestionFetcher for LiveNostrClient {
         install_rustls_crypto_provider();
         let client = Client::default();
         for relay in relays {
-            client
-                .add_relay(relay)
-                .await
-                .with_context(|| format!("Failed to add relay {relay}"))?;
+            let _ = client.add_relay(relay).await;
         }
 
-        client.try_connect(Duration::from_secs(8)).await;
+        client.try_connect(Duration::from_secs(3)).await;
         let mut filter = Filter::new()
             .kind(Kind::Custom(SUGGESTION_EVENT_KIND))
             .event(parent_event_id);
@@ -467,14 +464,97 @@ impl NostrSuggestionFetcher for LiveNostrClient {
             .fetch_events_from(
                 relays.iter().map(String::as_str),
                 filter,
-                Duration::from_secs(10),
+                Duration::from_secs(5),
             )
             .await
             .context("Failed to fetch suggestions from Nostr relays")?;
-        client.shutdown().await;
+        let _ = client.shutdown().await;
 
         Ok(events.into_iter().collect())
     }
+}
+
+/// Subscribe to real-time suggestions via Nostr relay subscription.
+/// Returns a tokio mpsc receiver that yields suggestions as they arrive.
+/// The subscription runs until the receiver is dropped.
+pub async fn subscribe_suggestions(
+    encryption_key_hex: &str,
+    original_event_id: &str,
+    relays: Vec<String>,
+) -> Result<tokio::sync::mpsc::Receiver<Suggestion>> {
+    let relays = normalize_relays(relays);
+    if relays.is_empty() {
+        return Err(anyhow!("At least one Nostr relay is required"));
+    }
+
+    install_rustls_crypto_provider();
+    let client = Client::default();
+    for relay in &relays {
+        let _ = client.add_relay(relay).await;
+    }
+    client.try_connect(Duration::from_secs(5)).await;
+
+    let parent_id = EventId::parse(original_event_id)?;
+    let filter = Filter::new()
+        .kind(Kind::Custom(SUGGESTION_EVENT_KIND))
+        .event(parent_id)
+        .since(Timestamp::now());
+
+    client
+        .subscribe(filter, None)
+        .await
+        .map_err(|e| anyhow!("Failed to subscribe: {e}"))?;
+
+    let secret_key = SecretKey::parse(encryption_key_hex)?;
+    let encryption_keys = Keys::new(secret_key.clone());
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Suggestion>(32);
+
+    tokio::spawn(async move {
+        let _ = client
+            .handle_notifications(|notification| {
+                let tx = tx.clone();
+                let secret_key = secret_key.clone();
+                let encryption_keys = encryption_keys.clone();
+                async move {
+                    if tx.is_closed() {
+                        return Ok(true);
+                    }
+                    if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
+                        if event.kind == Kind::Custom(SUGGESTION_EVENT_KIND) {
+                            if let Ok(decrypted) = nip44::decrypt(
+                                &secret_key,
+                                &encryption_keys.public_key(),
+                                &event.content,
+                            ) {
+                                let (text, sender_name) = if let Ok(payload) =
+                                    serde_json::from_str::<SuggestionPayload>(&decrypted)
+                                {
+                                    (payload.text, payload.sender_name)
+                                } else {
+                                    (decrypted, None)
+                                };
+
+                                let suggestion = Suggestion {
+                                    text,
+                                    sender_name,
+                                    event_id: event.id.to_hex(),
+                                    timestamp: event.created_at.as_secs(),
+                                };
+                                if tx.send(suggestion).await.is_err() {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
+                    Ok(false)
+                }
+            })
+            .await;
+        let _ = client.shutdown().await;
+    });
+
+    Ok(rx)
 }
 
 #[cfg(test)]

@@ -753,6 +753,12 @@ export type MessageEvent = {
     request_ids: Array<string>;
     type: 'ActiveRequests';
 } | {
+    event_id: string;
+    sender_name?: string | null;
+    text: string;
+    timestamp: number;
+    type: 'Suggestion';
+} | {
     type: 'Ping';
 };
 
