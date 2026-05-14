@@ -18,7 +18,7 @@ use super::formats::openai_responses::create_responses_request;
 use super::oauth;
 use super::openai_compatible::{
     handle_response_openai_compat, handle_status, map_http_error_to_provider_error,
-    stream_openai_compat, stream_responses_compat,
+    stream_openai_compat,
 };
 use super::retry::ProviderRetry;
 use super::utils::{ImageFormat, RequestLog};
@@ -383,6 +383,7 @@ impl Provider for DatabricksProvider {
 
         if Self::is_responses_model(&model_config.model_name) {
             let mut payload = create_responses_request(model_config, system, messages, tools)?;
+            adapt_responses_payload_for_databricks(&mut payload);
             payload["stream"] = Value::Bool(true);
             if let Some(ref client_request_id) = client_request_id {
                 payload["client_request_id"] = Value::String(client_request_id.clone());
@@ -404,7 +405,7 @@ impl Provider for DatabricksProvider {
                     let _ = log.error(e);
                 })?;
 
-            stream_responses_compat(response, log)
+            stream_openai_compat(response, log)
         } else {
             let mut payload =
                 create_request(model_config, system, messages, tools, &self.image_format)?;
@@ -585,6 +586,150 @@ impl EmbeddingCapable for DatabricksProvider {
     }
 }
 
+/// Adapt a payload produced by `create_responses_request` (OpenAI Responses API format)
+/// into the Chat Completions format that Databricks' `serving-endpoints/responses`
+/// endpoint actually expects.
+fn adapt_responses_payload_for_databricks(payload: &mut Value) {
+    let obj = match payload.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+
+    // Remove Responses-API-only fields
+    obj.remove("store");
+
+    // Convert reasoning: {"effort": "high", "summary": "auto"} → "reasoning_effort": "high"
+    if let Some(reasoning) = obj.remove("reasoning") {
+        if let Some(effort) = reasoning.get("effort").and_then(|e| e.as_str()) {
+            obj.insert("reasoning_effort".to_string(), json!(effort));
+        }
+    }
+
+    // max_output_tokens → max_completion_tokens
+    if let Some(max) = obj.remove("max_output_tokens") {
+        obj.insert("max_completion_tokens".to_string(), max);
+    }
+
+    // Rename "input" → "messages" and transform items
+    if let Some(input) = obj.remove("input") {
+        if let Some(items) = input.as_array() {
+            obj.insert(
+                "messages".to_string(),
+                json!(convert_responses_input_to_messages(items)),
+            );
+        }
+    }
+
+    // Convert Responses-API tool format to Chat Completions tool format:
+    //   {type, name, description, parameters, strict} →
+    //   {type: "function", function: {name, description, parameters}}
+    if let Some(tools) = obj.get_mut("tools") {
+        if let Some(tools_array) = tools.as_array_mut() {
+            for tool in tools_array.iter_mut() {
+                if let Some(tool_obj) = tool.as_object_mut() {
+                    let name = tool_obj.remove("name");
+                    let description = tool_obj.remove("description");
+                    let parameters = tool_obj.remove("parameters");
+                    tool_obj.remove("strict");
+
+                    let mut function = serde_json::Map::new();
+                    if let Some(n) = name {
+                        function.insert("name".to_string(), n);
+                    }
+                    if let Some(d) = description {
+                        function.insert("description".to_string(), d);
+                    }
+                    if let Some(p) = parameters {
+                        function.insert("parameters".to_string(), p);
+                    }
+                    tool_obj.insert("function".to_string(), Value::Object(function));
+                }
+            }
+        }
+    }
+}
+
+fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
+    let mut messages: Vec<Value> = Vec::new();
+
+    for item in items {
+        // Top-level typed items (function_call, function_call_output)
+        if let Some(item_type) = item.get("type").and_then(|t| t.as_str()) {
+            match item_type {
+                "function_call" => {
+                    let tool_call = json!({
+                        "id": item.get("call_id").cloned().unwrap_or(json!("")),
+                        "type": "function",
+                        "function": {
+                            "name": item.get("name").cloned().unwrap_or(json!("")),
+                            "arguments": item.get("arguments").cloned().unwrap_or(json!("{}"))
+                        }
+                    });
+
+                    // Merge into the last assistant message if one exists
+                    if let Some(last) = messages.last_mut() {
+                        if last.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                            let tool_calls = last
+                                .as_object_mut()
+                                .unwrap()
+                                .entry("tool_calls")
+                                .or_insert_with(|| json!([]));
+                            tool_calls.as_array_mut().unwrap().push(tool_call);
+                            continue;
+                        }
+                    }
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": Value::Null,
+                        "tool_calls": [tool_call]
+                    }));
+                }
+                "function_call_output" => {
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": item.get("call_id").cloned().unwrap_or(json!("")),
+                        "content": item.get("output").cloned().unwrap_or(json!(""))
+                    }));
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        // Role-based message items — convert content types
+        if item.get("role").is_some() {
+            let mut msg = item.clone();
+            if let Some(content) = msg.get_mut("content") {
+                if let Some(array) = content.as_array_mut() {
+                    for entry in array.iter_mut() {
+                        if let Some(t) = entry.get("type").and_then(|t| t.as_str()) {
+                            match t {
+                                "input_text" | "output_text" => {
+                                    entry
+                                        .as_object_mut()
+                                        .unwrap()
+                                        .insert("type".to_string(), json!("text"));
+                                }
+                                "input_image" => {
+                                    let obj = entry.as_object_mut().unwrap();
+                                    obj.insert("type".to_string(), json!("image_url"));
+                                    if let Some(url) = obj.remove("image_url") {
+                                        obj.insert("image_url".to_string(), json!({"url": url}));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            messages.push(msg);
+        }
+    }
+
+    messages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +758,8 @@ mod tests {
 
         for (model_name, expected_path) in [
             ("gpt-5.4", "serving-endpoints/responses"),
+            ("gpt-5.5", "serving-endpoints/responses"),
+            ("databricks-gpt-5.5-high", "serving-endpoints/responses"),
             ("databricks-gpt-5.4-high", "serving-endpoints/responses"),
             ("databricks-gpt-5-4-xhigh", "serving-endpoints/responses"),
             ("o3-mini", "serving-endpoints/responses"),
@@ -627,5 +774,106 @@ mod tests {
                 "unexpected endpoint for {model_name}"
             );
         }
+    }
+
+    #[test]
+    fn adapt_responses_payload_converts_to_chat_completions() {
+        let mut payload = json!({
+            "model": "gpt-5.5",
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "You are helpful."}]
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Hello"}]
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hi there!"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "my_tool",
+                    "arguments": "{\"x\":1}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "result"
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Thanks"}]
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "my_tool",
+                    "description": "A tool",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": false
+                }
+            ],
+            "store": false,
+            "max_output_tokens": 4096,
+            "reasoning": {"effort": "high", "summary": "auto"}
+        });
+
+        adapt_responses_payload_for_databricks(&mut payload);
+
+        // "store" removed
+        assert!(payload.get("store").is_none());
+
+        // reasoning converted
+        assert!(payload.get("reasoning").is_none());
+        assert_eq!(payload["reasoning_effort"], "high");
+
+        // max_output_tokens → max_completion_tokens
+        assert!(payload.get("max_output_tokens").is_none());
+        assert_eq!(payload["max_completion_tokens"], 4096);
+
+        // "input" renamed to "messages"
+        assert!(payload.get("input").is_none());
+        let messages = payload["messages"].as_array().unwrap();
+
+        // system message content types converted
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"][0]["type"], "text");
+        assert_eq!(messages[0]["content"][0]["text"], "You are helpful.");
+
+        // user message content types converted
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"][0]["type"], "text");
+
+        // assistant message with merged tool_calls
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"][0]["type"], "text");
+        assert_eq!(messages[2]["content"][0]["text"], "Hi there!");
+        let tool_calls = messages[2]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["function"]["name"], "my_tool");
+        assert_eq!(tool_calls[0]["function"]["arguments"], "{\"x\":1}");
+
+        // function_call_output → tool role message
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
+        assert_eq!(messages[3]["content"], "result");
+
+        // trailing user message
+        assert_eq!(messages[4]["role"], "user");
+        assert_eq!(messages[4]["content"][0]["type"], "text");
+
+        // tools converted to Chat Completions format
+        let tools = payload["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "my_tool");
+        assert_eq!(tools[0]["function"]["description"], "A tool");
+        assert!(tools[0].get("name").is_none());
+        assert!(tools[0].get("strict").is_none());
     }
 }
