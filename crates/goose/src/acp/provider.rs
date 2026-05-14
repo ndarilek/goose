@@ -1,6 +1,7 @@
 use agent_client_protocol::schema::{
-    ClientCapabilities, CloseSessionRequest, ContentBlock, ContentChunk, EnvVariable, HttpHeader,
-    ImageContent, InitializeRequest, InitializeResponse, McpCapabilities, McpServer, McpServerHttp,
+    AuthCapabilities, AuthenticateRequest, AuthenticateResponse, ClientCapabilities,
+    CloseSessionRequest, ContentBlock, ContentChunk, EnvVariable, HttpHeader, ImageContent,
+    InitializeRequest, InitializeResponse, McpCapabilities, McpServer, McpServerHttp,
     McpServerStdio, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
     ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
@@ -9,8 +10,8 @@ use agent_client_protocol::schema::{
     TextContent, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo};
-use agent_client_protocol_schema::Usage as AcpUsage;
 use agent_client_protocol_schema::AGENT_METHOD_NAMES;
+use agent_client_protocol_schema::Usage as AcpUsage;
 use anyhow::{Context, Result};
 use async_stream::try_stream;
 use futures::future::BoxFuture;
@@ -20,16 +21,16 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::JoinHandle;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
-use crate::acp::{map_permission_response, PermissionDecision};
+use crate::acp::{PermissionDecision, map_permission_response};
 use crate::config::{ExtensionConfig, GooseMode};
 use crate::context_mgmt::format_message_for_compacting;
 use crate::conversation::message::{Message, MessageContent, TOOL_META_EXTERNAL_DISPATCH_KEY};
@@ -986,7 +987,7 @@ async fn handle_requests(
 ) -> Result<(), agent_client_protocol::Error> {
     let mut init_tx = Some(init_tx);
 
-    let client_capabilities = ClientCapabilities::new();
+    let client_capabilities = ClientCapabilities::new().auth(AuthCapabilities::new());
     let init_response: InitializeResponse = cx
         .send_request(
             InitializeRequest::new(ProtocolVersion::LATEST)
@@ -1001,6 +1002,21 @@ async fn handle_requests(
             }
             agent_client_protocol::Error::internal_error().data(message)
         })?;
+
+    if !init_response.auth_methods.is_empty() {
+        let method_id = init_response.auth_methods[0].id().clone();
+        let _auth_response: AuthenticateResponse = cx
+            .send_request(AuthenticateRequest::new(method_id))
+            .block_task()
+            .await
+            .map_err(|err| {
+                let message = format!("ACP authenticate failed: {err}");
+                if let Some(tx) = init_tx.take() {
+                    let _ = tx.send(Err(anyhow::anyhow!(message.clone())));
+                }
+                agent_client_protocol::Error::internal_error().data(message)
+            })?;
+    }
 
     let supports_close = init_response
         .agent_capabilities
