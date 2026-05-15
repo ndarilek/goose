@@ -69,7 +69,13 @@ impl AnthropicFormatOptions {
 
 pub fn supports_adaptive_thinking(model_name: &str) -> bool {
     let lower = model_name.to_lowercase();
-    lower.contains("claude-opus-4-6") || lower.contains("claude-sonnet-4-6")
+    lower.contains("claude-opus-4-7")
+        || lower.contains("claude-opus-4-6")
+        || lower.contains("claude-sonnet-4-6")
+}
+
+fn is_claude_opus_47(model_name: &str) -> bool {
+    model_name.to_lowercase().contains("claude-opus-4-7")
 }
 
 pub fn thinking_type(model_config: &ModelConfig) -> ThinkingType {
@@ -497,6 +503,17 @@ pub fn thinking_effort(model_config: &ModelConfig) -> ThinkingEffort {
         .unwrap_or(ThinkingEffort::High)
 }
 
+fn adaptive_effort_value(model_config: &ModelConfig) -> &'static str {
+    match thinking_effort(model_config) {
+        ThinkingEffort::Off => "high",
+        ThinkingEffort::Low => "low",
+        ThinkingEffort::Medium => "medium",
+        ThinkingEffort::High => "high",
+        ThinkingEffort::Max if is_claude_opus_47(&model_config.model_name) => "xhigh",
+        ThinkingEffort::Max => "max",
+    }
+}
+
 pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
     if let Some(request_param) = model_config
         .request_params
@@ -542,8 +559,11 @@ fn apply_thinking_config(
     let obj = payload.as_object_mut().unwrap();
     match thinking_type(model_config) {
         ThinkingType::Adaptive => {
-            obj.insert("thinking".to_string(), json!({"type": "adaptive"}));
-            let effort = thinking_effort(model_config).to_string();
+            obj.insert(
+                "thinking".to_string(),
+                json!({"type": "adaptive", "display": "summarized"}),
+            );
+            let effort = adaptive_effort_value(model_config);
             obj.insert("output_config".to_string(), json!({"effort": effort}));
         }
         ThinkingType::Enabled => {
@@ -634,10 +654,17 @@ pub fn create_request_with_options(
     }
 
     if let Some(temp) = model_config.temperature {
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert("temperature".to_string(), json!(temp));
+        if is_claude_opus_47(&model_config.model_name) {
+            tracing::warn!(
+                "Temperature is not supported for {}, omitting configured temperature",
+                model_config.model_name
+            );
+        } else {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("temperature".to_string(), json!(temp));
+        }
     }
 
     apply_thinking_config(&mut payload, model_config, max_tokens, options);
@@ -1185,8 +1212,40 @@ mod tests {
         let payload = create_request(&config, "system", &messages, &[])?;
 
         assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["thinking"]["display"], "summarized");
         assert_eq!(payload["output_config"]["effort"], "high");
         assert!(payload.get("budget_tokens").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_adaptive_thinking_for_opus_47_max_effort() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        let mut config = cfg_with_effort("claude-opus-4-7", "max");
+        config.max_tokens = Some(4096);
+        let messages = vec![Message::user().with_text("Hello")];
+        let payload = create_request(&config, "system", &messages, &[])?;
+
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["thinking"]["display"], "summarized");
+        assert_eq!(payload["output_config"]["effort"], "xhigh");
+        assert_eq!(payload["max_tokens"], 4096);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_omits_temperature_for_opus_47() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        let mut config = cfg("claude-opus-4-7");
+        config.temperature = Some(0.2);
+        let messages = vec![Message::user().with_text("Hello")];
+        let payload = create_request(&config, "system", &messages, &[])?;
+
+        assert!(payload.get("temperature").is_none());
 
         Ok(())
     }
@@ -1449,6 +1508,10 @@ mod tests {
         // Adaptive model with effort → adaptive
         assert_eq!(
             thinking_type(&cfg_with_effort("claude-opus-4-6", "high")),
+            ThinkingType::Adaptive
+        );
+        assert_eq!(
+            thinking_type(&cfg_with_effort("claude-opus-4-7", "max")),
             ThinkingType::Adaptive
         );
         // Adaptive model with off → disabled
