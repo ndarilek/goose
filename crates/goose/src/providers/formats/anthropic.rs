@@ -507,7 +507,7 @@ pub fn adaptive_effort_value(model_config: &ModelConfig) -> Option<&'static str>
 }
 
 fn adaptive_effort_value_for_model(
-    _model_name: &str,
+    model_name: &str,
     effort: Option<ThinkingEffort>,
 ) -> Option<&'static str> {
     match effort? {
@@ -515,7 +515,8 @@ fn adaptive_effort_value_for_model(
         ThinkingEffort::Low => Some("low"),
         ThinkingEffort::Medium => Some("medium"),
         ThinkingEffort::High => Some("high"),
-        ThinkingEffort::XHigh => Some("xhigh"),
+        ThinkingEffort::XHigh if is_claude_opus_47(model_name) => Some("xhigh"),
+        ThinkingEffort::XHigh => Some("high"),
         ThinkingEffort::Max => Some("max"),
     }
 }
@@ -1302,6 +1303,23 @@ mod tests {
         assert_eq!(payload["thinking"]["type"], "adaptive");
         assert_eq!(payload["thinking"]["display"], "summarized");
         assert_eq!(payload["output_config"]["effort"], "xhigh");
+        assert_eq!(payload["max_tokens"], 4096);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_adaptive_thinking_for_46_xhigh_effort_downgrades() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        let mut config = cfg_with_effort("claude-sonnet-4-6", "xhigh");
+        config.max_tokens = Some(4096);
+        let messages = vec![Message::user().with_text("Hello")];
+        let payload = create_request(&config, "system", &messages, &[])?;
+
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["thinking"]["display"], "summarized");
+        assert_eq!(payload["output_config"]["effort"], "high");
         assert_eq!(payload["max_tokens"], 4096);
 
         Ok(())
