@@ -69,7 +69,7 @@ impl CodexProvider {
                 "low" => Some(crate::model::ThinkingEffort::Low),
                 "medium" => Some(crate::model::ThinkingEffort::Medium),
                 "high" => Some(crate::model::ThinkingEffort::High),
-                "xhigh" => Some(crate::model::ThinkingEffort::Max),
+                "xhigh" => Some(crate::model::ThinkingEffort::XHigh),
                 _ => None,
             })
     }
@@ -84,6 +84,7 @@ impl CodexProvider {
             ThinkingEffort::Low => Some("low".to_string()),
             ThinkingEffort::Medium => Some("medium".to_string()),
             ThinkingEffort::High => Some("high".to_string()),
+            ThinkingEffort::XHigh => Some("xhigh".to_string()),
             ThinkingEffort::Max => Some("xhigh".to_string()),
         }
     }

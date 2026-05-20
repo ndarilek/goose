@@ -243,6 +243,7 @@ fn reasoning_effort_for_config_with_config(
                 ThinkingEffort::Low => &["low", "medium", "high", "xhigh"],
                 ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
                 ThinkingEffort::High => &["high", "medium", "xhigh", "low"],
+                ThinkingEffort::XHigh => &["xhigh", "high", "medium", "low"],
                 ThinkingEffort::Max => &["xhigh", "high", "medium", "low"],
             };
 

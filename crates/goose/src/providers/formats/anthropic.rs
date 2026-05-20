@@ -507,7 +507,7 @@ pub fn adaptive_effort_value(model_config: &ModelConfig) -> Option<&'static str>
 }
 
 fn adaptive_effort_value_for_model(
-    model_name: &str,
+    _model_name: &str,
     effort: Option<ThinkingEffort>,
 ) -> Option<&'static str> {
     match effort? {
@@ -515,7 +515,7 @@ fn adaptive_effort_value_for_model(
         ThinkingEffort::Low => Some("low"),
         ThinkingEffort::Medium => Some("medium"),
         ThinkingEffort::High => Some("high"),
-        ThinkingEffort::Max if is_claude_opus_47(model_name) => Some("xhigh"),
+        ThinkingEffort::XHigh => Some("xhigh"),
         ThinkingEffort::Max => Some("max"),
     }
 }
@@ -569,6 +569,7 @@ fn thinking_budget_tokens_for_values(
         ThinkingEffort::Low => 4000,
         ThinkingEffort::Medium => 10000,
         ThinkingEffort::High => 16000,
+        ThinkingEffort::XHigh => 24000,
         ThinkingEffort::Max => 32000,
     })
 }
@@ -1283,6 +1284,23 @@ mod tests {
 
         assert_eq!(payload["thinking"]["type"], "adaptive");
         assert_eq!(payload["thinking"]["display"], "summarized");
+        assert_eq!(payload["output_config"]["effort"], "max");
+        assert_eq!(payload["max_tokens"], 4096);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_adaptive_thinking_for_opus_47_xhigh_effort() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        let mut config = cfg_with_effort("claude-opus-4-7", "xhigh");
+        config.max_tokens = Some(4096);
+        let messages = vec![Message::user().with_text("Hello")];
+        let payload = create_request(&config, "system", &messages, &[])?;
+
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["thinking"]["display"], "summarized");
         assert_eq!(payload["output_config"]["effort"], "xhigh");
         assert_eq!(payload["max_tokens"], 4096);
 
@@ -1470,7 +1488,7 @@ mod tests {
         assert_eq!(payload["thinking"]["type"], "adaptive");
         assert_eq!(payload["thinking"]["display"], "summarized");
         assert_eq!(payload["thinking"]["clear_thinking"], false);
-        assert_eq!(payload["output_config"]["effort"], "xhigh");
+        assert_eq!(payload["output_config"]["effort"], "max");
         assert!(payload["thinking"].get("budget_tokens").is_none());
         assert_eq!(payload["max_tokens"], 4096);
         assert_eq!(payload["messages"][0]["content"][0]["type"], "thinking");

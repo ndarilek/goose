@@ -1114,19 +1114,12 @@ mod tests {
 
     #[test]
     fn test_create_request_reasoning_effort_xhigh() -> anyhow::Result<()> {
-        let model_config = ModelConfig {
-            model_name: "o3-xhigh".to_string(),
-            context_limit: Some(4096),
-            temperature: None,
-            max_tokens: Some(1024),
-            toolshim: false,
-            toolshim_model: None,
-            fast_model_config: None,
-            request_params: None,
-            reasoning: None,
-        };
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        let mut model_config = ModelConfig::new_or_fail("gpt-5.4-xhigh");
+        model_config.max_tokens = Some(1024);
         let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
-        assert_eq!(request["model"], "o3");
+        assert_eq!(request["model"], "gpt-5.4");
         assert_eq!(request["reasoning_effort"], "xhigh");
         Ok(())
     }
@@ -1209,10 +1202,17 @@ mod tests {
 
     #[test]
     fn test_create_request_enabled_thinking_budget_tracks_effort() -> anyhow::Result<()> {
+        let _guard = env_lock::lock_env([
+            ("GOOSE_THINKING_EFFORT", None::<&str>),
+            ("ANTHROPIC_THINKING_BUDGET", None::<&str>),
+            ("CLAUDE_THINKING_BUDGET", None::<&str>),
+        ]);
+
         for (effort, expected_budget) in [
             ("low", 4000),
             ("medium", 10000),
             ("high", 16000),
+            ("xhigh", 24000),
             ("max", 32000),
         ] {
             let mut model_config = ModelConfig::new_or_fail("databricks-claude-3-7-sonnet");

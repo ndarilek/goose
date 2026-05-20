@@ -53,6 +53,10 @@ const i18n = defineMessages({
     id: 'switchModelModal.claudeEffortHigh',
     defaultMessage: 'High - Deep reasoning (default)',
   },
+  claudeEffortXHigh: {
+    id: 'switchModelModal.claudeEffortXHigh',
+    defaultMessage: 'XHigh - Extended coding and agentic work',
+  },
   claudeEffortMax: {
     id: 'switchModelModal.claudeEffortMax',
     defaultMessage: 'Max - No constraints on thinking depth',
@@ -262,6 +266,7 @@ export const SwitchModelModal = ({
     { value: 'low', label: intl.formatMessage(i18n.claudeEffortLow) },
     { value: 'medium', label: intl.formatMessage(i18n.claudeEffortMedium) },
     { value: 'high', label: intl.formatMessage(i18n.claudeEffortHigh) },
+    { value: 'xhigh', label: intl.formatMessage(i18n.claudeEffortXHigh) },
     { value: 'max', label: intl.formatMessage(i18n.claudeEffortMax) },
   ];
 
