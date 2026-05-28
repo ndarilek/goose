@@ -18,6 +18,7 @@ use crate::conversation::message::{
     ActionRequiredData, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
     ToolRequest,
 };
+use crate::execution::manager::AgentManager;
 use crate::mcp_utils::ToolResult;
 use crate::permission::permission_confirmation::PrincipalType;
 use crate::permission::{Permission, PermissionConfirmation};
@@ -219,6 +220,7 @@ pub struct GooseAcpAgentOptions {
 
 pub struct GooseAcpAgent {
     sessions: Arc<Mutex<HashMap<String, GooseAcpSession>>>,
+    agent_manager: Arc<AgentManager>,
     provider_factory: AcpProviderFactory,
     builtins: Vec<String>,
     client_fs_capabilities: OnceCell<FileSystemCapabilities>,
@@ -1289,9 +1291,19 @@ impl GooseAcpAgent {
 
         let permission_manager = Arc::new(PermissionManager::new(options.config_dir.clone()));
         let provider_inventory = ProviderInventoryService::new(session_manager.storage().clone());
+        let agent_config = AgentConfig::new(
+            Arc::clone(&session_manager),
+            Arc::clone(&permission_manager),
+            None,
+            Config::global().get_goose_mode().unwrap_or_default(),
+            options.disable_session_naming,
+            options.goose_platform.clone(),
+        );
+        let agent_manager = Arc::new(AgentManager::new(agent_config, None).await?);
 
         Ok(Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            agent_manager,
             provider_factory: options.provider_factory,
             builtins: options.builtins,
             client_fs_capabilities: OnceCell::new(),
