@@ -88,10 +88,6 @@ impl GooseAcpAgent {
                     .to_string();
                 let trimmed_empty = req.text.trim().is_empty();
                 let op = if !is_client_authored_key(&key) {
-                    warn!(
-                        key = %key,
-                        "system-prompt set: key not in client-authored allowlist; applied to in-memory PromptManager only (not persisted)"
-                    );
                     PersistOp::Skip
                 } else if trimmed_empty {
                     PersistOp::RemoveExtra(key.clone())
