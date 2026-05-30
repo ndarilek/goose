@@ -69,7 +69,17 @@ impl AnthropicFormatOptions {
 
 pub fn supports_adaptive_thinking(model_name: &str) -> bool {
     let lower = model_name.to_lowercase();
-    lower.contains("claude-opus-4-6") || lower.contains("claude-sonnet-4-6")
+    lower.contains("claude-opus-4-6")
+        || lower.contains("claude-sonnet-4-6")
+        || lower.contains("claude-opus-4-7")
+        || lower.contains("claude-opus-4-8")
+}
+
+/// Anthropic's Opus 4.7+ Messages API rejects non-default sampling parameters
+/// (`temperature`, `top_p`, `top_k`) with HTTP 400, so they must be omitted.
+pub fn rejects_sampling_params(model_name: &str) -> bool {
+    let lower = model_name.to_lowercase();
+    lower.contains("claude-opus-4-7") || lower.contains("claude-opus-4-8")
 }
 
 pub fn thinking_type(model_config: &ModelConfig) -> ThinkingType {
@@ -649,10 +659,12 @@ pub fn create_request_with_options(
     }
 
     if let Some(temp) = model_config.temperature {
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert("temperature".to_string(), json!(temp));
+        if !rejects_sampling_params(&model_config.model_name) {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("temperature".to_string(), json!(temp));
+        }
     }
 
     apply_thinking_config(&mut payload, model_config, max_tokens, options);
@@ -1207,6 +1219,54 @@ mod tests {
     }
 
     #[test]
+    fn test_create_request_adaptive_thinking_for_47_and_48_models() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+            let mut params = std::collections::HashMap::new();
+            params.insert("thinking_effort".to_string(), json!("high"));
+
+            let mut config = cfg(model);
+            config.max_tokens = Some(4096);
+            config.request_params = Some(params);
+            let messages = vec![Message::user().with_text("Hello")];
+            let payload = create_request(&config, "system", &messages, &[])?;
+
+            assert_eq!(payload["thinking"]["type"], "adaptive", "model {model}");
+            assert_eq!(payload["output_config"]["effort"], "high", "model {model}");
+            assert!(payload.get("budget_tokens").is_none(), "model {model}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_omits_temperature_for_47_and_48_models() -> Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+
+        for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+            let mut config = cfg(model);
+            config.temperature = Some(0.7);
+            let messages = vec![Message::user().with_text("Hello")];
+            let payload = create_request(&config, "system", &messages, &[])?;
+
+            assert!(
+                payload.get("temperature").is_none(),
+                "model {model} should omit temperature"
+            );
+        }
+
+        // Older models still send temperature.
+        let mut config = cfg("claude-opus-4-6");
+        config.temperature = Some(0.7);
+        let messages = vec![Message::user().with_text("Hello")];
+        let payload = create_request(&config, "system", &messages, &[])?;
+        assert!(payload.get("temperature").is_some());
+
+        Ok(())
+    }
+
+    #[test]
     fn test_create_request_enabled_thinking_with_budget() -> Result<()> {
         let _guard = env_lock::lock_env([
             ("GOOSE_THINKING_EFFORT", None::<&str>),
@@ -1517,6 +1577,15 @@ mod tests {
         // Adaptive model with effort → adaptive
         assert_eq!(
             thinking_type(&cfg_with_effort("claude-opus-4-6", "high")),
+            ThinkingType::Adaptive
+        );
+        // Opus 4.7/4.8 are adaptive-only models
+        assert_eq!(
+            thinking_type(&cfg_with_effort("claude-opus-4-7", "high")),
+            ThinkingType::Adaptive
+        );
+        assert_eq!(
+            thinking_type(&cfg_with_effort("claude-opus-4-8", "high")),
             ThinkingType::Adaptive
         );
         // Adaptive model with off → disabled
