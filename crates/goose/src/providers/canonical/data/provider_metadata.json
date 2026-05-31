@@ -140,7 +140,7 @@
     "env": [
       "DIGITALOCEAN_ACCESS_TOKEN"
     ],
-    "model_count": 76
+    "model_count": 78
   },
   {
     "id": "submodel",
@@ -383,7 +383,7 @@
     "env": [
       "ZHIPU_API_KEY"
     ],
-    "model_count": 5
+    "model_count": 6
   },
   {
     "id": "neuralwatt",
@@ -451,6 +451,18 @@
       "PRIVATEMODE_ENDPOINT"
     ],
     "model_count": 5
+  },
+  {
+    "id": "snowflake-cortex",
+    "display_name": "Snowflake Cortex",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2/cortex/v1",
+    "doc": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api",
+    "env": [
+      "SNOWFLAKE_ACCOUNT",
+      "SNOWFLAKE_CORTEX_PAT"
+    ],
+    "model_count": 11
   },
   {
     "id": "moonshotai",
@@ -659,7 +671,7 @@
     "env": [
       "NVIDIA_API_KEY"
     ],
-    "model_count": 92
+    "model_count": 93
   },
   {
     "id": "routing-run",
@@ -780,7 +792,7 @@
     "env": [
       "WAFER_API_KEY"
     ],
-    "model_count": 4
+    "model_count": 7
   },
   {
     "id": "berget",
@@ -817,7 +829,7 @@
   },
   {
     "id": "stepfun",
-    "display_name": "StepFun",
+    "display_name": "StepFun (China)",
     "npm": "@ai-sdk/openai-compatible",
     "api": "https://api.stepfun.com/v1",
     "doc": "https://platform.stepfun.com/docs/zh/overview/concept",

@@ -361,6 +361,17 @@ fn parse_modalities(model_data: &Value, field: &str) -> Vec<Modality> {
         .unwrap_or_else(|| vec![Modality::Text])
 }
 
+/// Tie-break for raw model ids that collapse to the same canonical key: prefer
+/// the newer `release_date`; a candidate with a known date beats one without.
+/// ISO dates compare correctly as strings.
+fn is_newer_release(candidate: &CanonicalModel, existing: &CanonicalModel) -> bool {
+    match (&candidate.release_date, &existing.release_date) {
+        (Some(c), Some(e)) => c > e,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
 fn process_model(
     model_id: &str,
     model_data: &Value,
@@ -526,8 +537,18 @@ async fn build_canonical_models() -> Result<()> {
         for (model_id, model_data) in models {
             let (model_name, canonical_model) =
                 process_model(model_id, model_data, normalized_provider)?;
+            // Dated ids (e.g. gpt-4o-2024-05-13) and the floating alias (gpt-4o)
+            // collapse to the same canonical key. models.dev's listing order is
+            // not stable, so keep the newest release_date rather than letting the
+            // last-listed entry win.
+            if let Some(existing) = registry.get(normalized_provider, &model_name) {
+                if !is_newer_release(&canonical_model, existing) {
+                    continue;
+                }
+            } else {
+                total_models += 1;
+            }
             registry.register(normalized_provider, &model_name, canonical_model);
-            total_models += 1;
         }
     }
 
