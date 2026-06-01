@@ -831,6 +831,10 @@ enum Command {
             action = clap::ArgAction::Append
         )]
         builtins: Vec<String>,
+
+        /// Serve ACP over an iroh QUIC transport (relay + direct) instead of HTTP
+        #[arg(long)]
+        iroh: bool,
     },
 
     /// Start or resume interactive chat sessions
@@ -1366,6 +1370,60 @@ async fn handle_serve_command(host: String, port: u16, builtins: Vec<String>) ->
     .await?;
 
     Ok(())
+}
+
+async fn handle_serve_iroh_command(builtins: Vec<String>) -> Result<()> {
+    use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
+    use goose::acp::transport::iroh as iroh_transport;
+    use goose::config::paths::Paths;
+    use std::sync::Arc;
+    use tracing::info;
+
+    let builtins = if builtins.is_empty() {
+        vec!["developer".to_string()]
+    } else {
+        builtins
+    };
+
+    let server = Arc::new(AcpServer::new(AcpServerFactoryConfig {
+        builtins,
+        data_dir: Paths::data_dir(),
+        config_dir: Paths::config_dir(),
+        goose_platform: GoosePlatform::GooseCli,
+        additional_source_roots: Vec::new(),
+    }));
+
+    // Persist a stable NodeId across restarts so the paired client keeps working.
+    let secret_key = load_or_create_iroh_secret_key()?;
+    let (endpoint, token) = iroh_transport::bind_server(secret_key).await?;
+
+    info!("iroh ACP server ready");
+    println!("\n=== goose iroh ACP server ===");
+    println!("NodeId: {}", endpoint.id());
+    println!("Connection token (QR payload):\n{token}\n");
+
+    iroh_transport::serve(endpoint, server).await
+}
+
+fn load_or_create_iroh_secret_key() -> Result<iroh::SecretKey> {
+    use goose::config::paths::Paths;
+    use std::io::Write as _;
+
+    let path = Paths::config_dir().join("iroh_acp_secret.key");
+    if let Ok(hex_str) = std::fs::read_to_string(&path) {
+        if let Ok(bytes) = hex::decode(hex_str.trim()) {
+            if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                return Ok(iroh::SecretKey::from_bytes(&arr));
+            }
+        }
+    }
+    let key = iroh::SecretKey::generate();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::File::create(&path)?;
+    write!(f, "{}", hex::encode(key.to_bytes()))?;
+    Ok(key)
 }
 
 async fn handle_session_subcommand(command: SessionCommand) -> Result<()> {
@@ -2091,7 +2149,14 @@ pub async fn cli() -> anyhow::Result<()> {
             host,
             port,
             builtins,
-        }) => handle_serve_command(host, port, builtins).await,
+            iroh,
+        }) => {
+            if iroh {
+                handle_serve_iroh_command(builtins).await
+            } else {
+                handle_serve_command(host, port, builtins).await
+            }
+        }
         Some(Command::Session {
             command: Some(cmd), ..
         }) => handle_session_subcommand(cmd).await,

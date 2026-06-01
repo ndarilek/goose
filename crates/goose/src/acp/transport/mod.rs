@@ -1,5 +1,6 @@
 pub mod connection;
 pub mod http;
+pub mod iroh;
 pub mod websocket;
 
 use std::sync::Arc;
