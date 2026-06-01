@@ -23,12 +23,7 @@ impl AcpServer {
     }
 
     pub async fn create_agent(&self) -> Result<Arc<GooseAcpAgent>> {
-        let config_path = self
-            .config
-            .config_dir
-            .join(crate::config::base::CONFIG_YAML_NAME);
-        let config = crate::config::Config::new(&config_path, "goose")?;
-
+        let config = crate::config::Config::global();
         let disable_session_naming = config.get_goose_disable_session_naming().unwrap_or(false);
 
         let provider_factory: AcpProviderFactory = Arc::new(
