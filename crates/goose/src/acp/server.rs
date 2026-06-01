@@ -2688,8 +2688,6 @@ impl GooseAcpAgent {
         let current_provider_name = current_provider.get_name();
         let current_model_config = current_provider.get_model_config();
         let current_model = current_model_config.model_name.clone();
-        let has_default_overrides =
-            model_name.is_some() || context_limit.is_some() || request_params.is_some();
         let use_default_provider = provider_name == DEFAULT_PROVIDER_ID;
         let resolved_provider_name = if use_default_provider {
             config
@@ -2746,32 +2744,8 @@ impl GooseAcpAgent {
             .update_goose_mode(mode, session_id)
             .await
             .internal_err_ctx("Failed to propagate mode")?;
-        let provider = agent
-            .provider()
-            .await
-            .internal_err_ctx("Failed to get provider")?;
 
         // provider_name is already updated on the session by the agent's update_provider call.
-
-        if use_default_provider {
-            let update = self
-                .session_manager
-                .update(session_id)
-                .provider_name(DEFAULT_PROVIDER_ID);
-            if has_default_overrides {
-                update
-                    .model_config(provider.get_model_config())
-                    .apply()
-                    .await
-                    .internal_err_ctx("Failed to persist default provider selection overrides")?;
-            } else {
-                update
-                    .clear_model_config()
-                    .apply()
-                    .await
-                    .internal_err_ctx("Failed to persist default provider selection")?;
-            }
-        }
         Ok(())
     }
 
