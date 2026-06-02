@@ -6,7 +6,7 @@ pub use model::{CanonicalModel, Limit, Modalities, Modality, Pricing};
 pub use name_builder::{
     canonical_name, map_provider_name, map_to_canonical_model, strip_version_suffix,
 };
-pub use registry::CanonicalModelRegistry;
+pub use registry::{CanonicalModelRegistry, CANONICAL_MODELS_JSON, PROVIDER_METADATA_JSON};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelMapping {

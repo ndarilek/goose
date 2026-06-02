@@ -4,10 +4,8 @@ use std::collections::HashMap;
 
 use super::{
     base::{ConfigKey, ProviderMetadata},
-    canonical::CanonicalModelRegistry,
+    canonical::{CanonicalModelRegistry, PROVIDER_METADATA_JSON},
 };
-
-const PROVIDER_METADATA_JSON: &str = include_str!("canonical/data/provider_metadata.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProviderMetadataEntry {

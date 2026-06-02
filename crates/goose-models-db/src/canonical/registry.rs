@@ -4,10 +4,11 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::Path;
 
+pub const CANONICAL_MODELS_JSON: &str = include_str!("data/canonical_models.json");
+pub const PROVIDER_METADATA_JSON: &str = include_str!("data/provider_metadata.json");
+
 /// Cached bundled canonical model registry
 static BUNDLED_REGISTRY: Lazy<Result<CanonicalModelRegistry>> = Lazy::new(|| {
-    const CANONICAL_MODELS_JSON: &str = include_str!("data/canonical_models.json");
-
     let models: Vec<CanonicalModel> = serde_json::from_str(CANONICAL_MODELS_JSON)
         .context("Failed to parse bundled canonical models JSON")?;
 
