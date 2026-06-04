@@ -2,7 +2,7 @@ use super::base::{ConfigKey, ModelInfo, ProviderDef, ProviderMetadata, ProviderT
 use super::inventory::InventoryIdentityInput;
 use super::mode::GooseProvider;
 use crate::config::{DeclarativeProviderConfig, ExtensionConfig};
-use crate::model::ModelConfig;
+use crate::model::{ModelConfig, ModelConfigResolver};
 use anyhow::Result;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
@@ -58,8 +58,9 @@ impl ProviderEntry {
         (self.inventory_configured)()
     }
 
-    fn normalize_model_config(&self, mut model: ModelConfig) -> ModelConfig {
-        model = model.with_canonical_limits(&self.metadata.name);
+    fn normalize_model_config(&self, model: ModelConfig) -> Result<ModelConfig> {
+        let runtime = crate::providers::runtime::global_provider_runtime();
+        let mut model = ModelConfigResolver::new(runtime).apply(&self.metadata.name, model)?;
 
         if model.context_limit.is_none() {
             if let Some(info) = self
@@ -72,7 +73,7 @@ impl ProviderEntry {
             }
         }
 
-        model
+        Ok(model)
     }
 
     pub async fn create_with_default_model(
@@ -80,7 +81,8 @@ impl ProviderEntry {
         extensions: Vec<ExtensionConfig>,
     ) -> Result<Arc<dyn GooseProvider>> {
         let default_model = &self.metadata.default_model;
-        let model_config = self.normalize_model_config(ModelConfig::new(default_model.as_str())?);
+        let model_config =
+            self.normalize_model_config(ModelConfig::new(default_model.as_str())?)?;
         (self.constructor)(model_config, extensions, None).await
     }
 
@@ -89,7 +91,7 @@ impl ProviderEntry {
         model: ModelConfig,
         extensions: Vec<ExtensionConfig>,
     ) -> Result<Arc<dyn GooseProvider>> {
-        let model = self.normalize_model_config(model);
+        let model = self.normalize_model_config(model)?;
         (self.constructor)(model, extensions, None).await
     }
 
@@ -99,7 +101,7 @@ impl ProviderEntry {
         extensions: Vec<ExtensionConfig>,
         working_dir: PathBuf,
     ) -> Result<Arc<dyn GooseProvider>> {
-        let model = self.normalize_model_config(model);
+        let model = self.normalize_model_config(model)?;
         (self.constructor)(model, extensions, Some(working_dir)).await
     }
 }

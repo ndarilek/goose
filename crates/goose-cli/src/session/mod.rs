@@ -2116,7 +2116,6 @@ fn handle_agent_error(e: &anyhow::Error, is_stream_json_mode: bool) {
 }
 
 async fn get_reasoner() -> Result<Arc<dyn Provider>, anyhow::Error> {
-    use goose::model::ModelConfig;
     use goose::providers::create;
 
     let config = Config::global();
@@ -2141,8 +2140,10 @@ async fn get_reasoner() -> Result<Arc<dyn Provider>, anyhow::Error> {
             .expect("No model configured. Run 'goose configure' first")
     };
 
-    let model_config =
-        ModelConfig::new_with_context_env(model, &provider, Some("GOOSE_PLANNER_CONTEXT_LIMIT"))?;
+    let model_config = goose::model::ModelConfigResolver::new(
+        goose::providers::runtime::global_provider_runtime(),
+    )
+    .resolve_with_context_key(&provider, &model, Some("GOOSE_PLANNER_CONTEXT_LIMIT"))?;
     let extensions = goose::config::extensions::get_enabled_extensions_with_config(config);
     let reasoner = create(&provider, model_config, extensions).await?;
 
@@ -2167,10 +2168,10 @@ fn build_switched_model_config(
     model_name: &str,
     current_model_config: &goose::model::ModelConfig,
 ) -> Result<goose::model::ModelConfig> {
-    goose::model::ModelConfig::new(model_name)
+    goose::model::ModelConfigResolver::new(goose::providers::runtime::global_provider_runtime())
+        .resolve(provider_name, model_name)
         .map(|config| {
             config
-                .with_canonical_limits(provider_name)
                 .with_temperature(current_model_config.temperature)
                 .with_toolshim(current_model_config.toolshim)
                 .with_toolshim_model(current_model_config.toolshim_model.clone())

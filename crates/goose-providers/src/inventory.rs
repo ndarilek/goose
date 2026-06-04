@@ -1,5 +1,5 @@
 use crate::base::ConfigKey;
-use crate::config::{ProviderConfigError, ProviderConfigExt, ProviderConfigStore};
+use crate::config::ProviderConfigStore;
 use crate::utils::bytes_to_hex;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -82,15 +82,11 @@ pub fn default_inventory_identity(
     let mut input = InventoryIdentityInput::new(provider_id, provider_family);
 
     for key in config_keys {
-        if !key.primary {
-            continue;
-        }
-
         if key.secret {
-            if let Ok(value) = config.get_secret::<String>(&key.name) {
+            if let Some(value) = config_secret_value(config, &key.name) {
                 input = input.with_secret(&key.name, value);
             }
-        } else if let Ok(value) = config.get_param::<String>(&key.name) {
+        } else if let Some(value) = config_param_value(config, &key.name) {
             input = input.with_public(&key.name, value);
         }
     }
@@ -102,19 +98,42 @@ pub fn default_inventory_configured(
     config_keys: &[ConfigKey],
     config: &dyn ProviderConfigStore,
 ) -> bool {
-    config_keys.iter().filter(|key| key.required).all(|key| {
-        let value = if key.secret {
-            config.get_secret::<String>(&key.name)
+    config_keys.iter().all(|key| {
+        if !key.required {
+            return true;
+        }
+        if key.default.is_some() {
+            return true;
+        }
+        if key.secret {
+            config.get_secret_value(&key.name).is_ok()
         } else {
-            config.get_param::<String>(&key.name)
-        };
-
-        match value {
-            Ok(value) => !value.trim().is_empty(),
-            Err(ProviderConfigError::NotFound(_)) => false,
-            Err(_) => false,
+            config.get_param_value(&key.name).is_ok()
         }
     })
+}
+
+fn config_param_value(config: &dyn ProviderConfigStore, key: &str) -> Option<String> {
+    config
+        .get_param_value(key)
+        .ok()
+        .and_then(|value| normalize_json_value(&value))
+}
+
+fn config_secret_value(config: &dyn ProviderConfigStore, key: &str) -> Option<String> {
+    config
+        .get_secret_value(key)
+        .ok()
+        .and_then(|value| normalize_json_value(&value))
+}
+
+fn normalize_json_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(value) if value.is_empty() => None,
+        serde_json::Value::String(value) => Some(value.clone()),
+        other => serde_json::to_string(other).ok(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

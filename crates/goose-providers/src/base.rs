@@ -1,7 +1,6 @@
 use crate::canonical::{map_to_canonical_model, CanonicalModelRegistry, Modality};
 use crate::config::ProviderRuntime;
 use crate::conversation::message::{Message, MessageContent};
-use crate::conversation::Conversation;
 use crate::errors::ProviderError;
 use crate::inventory::{
     default_inventory_configured, default_inventory_identity, InventoryIdentityInput,
@@ -9,19 +8,16 @@ use crate::inventory::{
 use crate::model::ModelConfig;
 use crate::permission::PermissionConfirmation;
 use crate::retry::RetryConfig;
-use crate::utils::safe_truncate;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::Stream;
 use once_cell::sync::Lazy;
-use regex::Regex;
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use utoipa::ToSchema;
 
@@ -261,14 +257,61 @@ fn is_possible_partial_think_tag(suffix: &str) -> bool {
         return false;
     }
 
-    static OPEN_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?is)^<(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)(?:\s.*|/)?$").unwrap()
-    });
-    static CLOSE_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?is)^</(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?)?)?)?)(?:\s*)?$").unwrap()
-    });
+    let lower = suffix.to_ascii_lowercase();
+    let Some(after_lt) = lower.strip_prefix('<') else {
+        return false;
+    };
 
-    OPEN_RE.is_match(suffix) || CLOSE_RE.is_match(suffix)
+    if let Some(after_slash) = after_lt.strip_prefix('/') {
+        return is_partial_closing_think_tag(after_slash);
+    }
+
+    is_partial_opening_think_tag(after_lt)
+}
+
+fn is_partial_closing_think_tag(text: &str) -> bool {
+    let name_len = leading_ascii_alpha_len(text);
+    let Some(name) = text.get(..name_len) else {
+        return false;
+    };
+    let Some(rest) = text.get(name_len..) else {
+        return false;
+    };
+
+    (name.is_empty() || is_think_name_prefix(name)) && rest.chars().all(char::is_whitespace)
+}
+
+fn is_partial_opening_think_tag(text: &str) -> bool {
+    let name_len = leading_ascii_alpha_len(text);
+    let Some(name) = text.get(..name_len) else {
+        return false;
+    };
+    let Some(rest) = text.get(name_len..) else {
+        return false;
+    };
+
+    if name.is_empty() {
+        return text.is_empty();
+    }
+
+    if !is_think_name_prefix(name) {
+        return false;
+    }
+
+    rest.is_empty()
+        || is_complete_think_name(name) && rest.starts_with([' ', '\t', '\r', '\n', '/'])
+}
+
+fn leading_ascii_alpha_len(text: &str) -> usize {
+    text.bytes().take_while(u8::is_ascii_alphabetic).count()
+}
+
+fn is_think_name_prefix(name: &str) -> bool {
+    "think".starts_with(name) || "thinking".starts_with(name)
+}
+
+fn is_complete_think_name(name: &str) -> bool {
+    matches!(name, "think" | "thinking")
 }
 
 fn contains_unquoted_gt(text: &str) -> bool {
@@ -286,68 +329,6 @@ fn contains_unquoted_gt(text: &str) -> bool {
         }
     }
     false
-}
-
-fn strip_xml_tags(text: &str) -> String {
-    static BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?s)<([a-zA-Z][a-zA-Z0-9_]*)[^>]*>.*?</[a-zA-Z][a-zA-Z0-9_]*>").unwrap()
-    });
-    static TAG_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"</?[a-zA-Z][a-zA-Z0-9_]*[^>]*>").unwrap());
-    let pass1 = BLOCK_RE.replace_all(text, "");
-    TAG_RE.replace_all(&pass1, "").into_owned()
-}
-
-fn extract_short_title(text: &str) -> String {
-    let word_count = text.split_whitespace().count();
-    if word_count <= 8 {
-        return text.to_string();
-    }
-
-    {
-        let mut results = Vec::new();
-        let mut quote_char: Option<char> = None;
-        let mut current = String::new();
-        let mut prev_char: Option<char> = None;
-
-        for ch in text.chars() {
-            match quote_char {
-                None => {
-                    if matches!(ch, '"' | '\'' | '`') {
-                        let after_alnum = prev_char.map(|p| p.is_alphanumeric()).unwrap_or(false);
-                        if !after_alnum {
-                            quote_char = Some(ch);
-                            current.clear();
-                        }
-                    }
-                }
-                Some(q) => {
-                    if ch == q {
-                        let trimmed = current.trim().to_string();
-                        let wc = trimmed.split_whitespace().count();
-                        if (2..=8).contains(&wc) {
-                            results.push(trimmed);
-                        }
-                        quote_char = None;
-                        current.clear();
-                    } else {
-                        current.push(ch);
-                    }
-                }
-            }
-            prev_char = Some(ch);
-        }
-
-        if let Some(title) = results.last() {
-            return title.clone();
-        }
-    }
-
-    if let Some(last) = text.lines().rev().find(|line| !line.trim().is_empty()) {
-        return last.trim().to_string();
-    }
-
-    text.to_string()
 }
 
 pub static CURRENT_MODEL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
@@ -1003,88 +984,6 @@ pub trait Provider: Send + Sync {
         Err(ProviderError::ExecutionError(
             "This provider does not support embeddings".to_string(),
         ))
-    }
-
-    fn get_initial_user_messages(&self, messages: &Conversation) -> Vec<String> {
-        messages
-            .iter()
-            .filter(|m| m.role == rmcp::model::Role::User)
-            .take(MSG_COUNT_FOR_SESSION_NAME_GENERATION)
-            .map(|m| {
-                m.content
-                    .iter()
-                    .filter_map(|c| c.filter_for_audience(rmcp::model::Role::User))
-                    .filter_map(|c| c.as_text().map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .collect()
-    }
-
-    fn get_preprompt_context(&self, messages: &Conversation) -> String {
-        messages
-            .iter()
-            .filter(|m| m.role == rmcp::model::Role::User)
-            .take(1)
-            .flat_map(|m| m.content.iter())
-            .filter_map(|c| {
-                if c.filter_for_audience(rmcp::model::Role::User).is_none() {
-                    c.as_text().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    async fn generate_session_name(
-        &self,
-        session_id: &str,
-        messages: &Conversation,
-    ) -> Result<String, ProviderError> {
-        const SESSION_NAME_PROMPT: &str = "Generate a short title (four words or less) that describes the topic of the user's messages.\nReply with only the title, nothing else. Do not show your reasoning.";
-        const SESSION_NAME_BEGIN_MARKER: &str = "---BEGIN USER MESSAGES---";
-        const SESSION_NAME_END_MARKER: &str = "---END USER MESSAGES---";
-        const SESSION_NAME_SUFFIX: &str = "Generate a short title for the above messages.";
-
-        let context = self.get_initial_user_messages(messages);
-        let preprompt_context = self.get_preprompt_context(messages);
-
-        let preprompt_section = if preprompt_context.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "---BEGIN BACKGROUND CONTEXT (for understanding only, do NOT base the title on this)---\n{}\n---END BACKGROUND CONTEXT---\n\n",
-                preprompt_context
-            )
-        };
-
-        let user_text = format!(
-            "{}{}\n{}\n{}\n\n{}",
-            preprompt_section,
-            SESSION_NAME_BEGIN_MARKER,
-            context.join("\n"),
-            SESSION_NAME_END_MARKER,
-            SESSION_NAME_SUFFIX,
-        );
-        let message = Message::user().with_text(&user_text);
-        let result = self
-            .complete_fast(session_id, SESSION_NAME_PROMPT, &[message], &[])
-            .await?;
-
-        let raw: String = result
-            .0
-            .content
-            .iter()
-            .filter_map(|c| c.as_text())
-            .collect();
-        let description = strip_xml_tags(&raw)
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        Ok(safe_truncate(&extract_short_title(&description), 100))
     }
 
     async fn configure_oauth(&self) -> Result<(), ProviderError> {

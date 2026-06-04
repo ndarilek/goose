@@ -44,8 +44,8 @@ pub fn safe_truncate(s: &str, max_chars: usize) -> String {
 pub fn is_openai_responses_model(model_name: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re =
-        RE.get_or_init(|| Regex::new(r"(?i)(?:^|[-/])(?:o\d+(?:$|-)|gpt-5(?:$|[-.]))").unwrap());
-    re.is_match(model_name)
+        RE.get_or_init(|| Regex::new(r"(?:^|[-/])(?:o[0-9]+(?:$|-)|gpt-5(?:$|[-.]))").unwrap());
+    re.is_match(&model_name.to_ascii_lowercase())
 }
 
 pub fn extract_reasoning_effort(model_name: &str) -> (String, Option<String>) {
@@ -53,15 +53,15 @@ pub fn extract_reasoning_effort(model_name: &str) -> (String, Option<String>) {
         return (model_name.to_string(), None);
     }
 
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?P<base>.+)-(?P<effort>none|low|medium|high|xhigh)$").unwrap()
-    });
-
-    if let Some(captures) = re.captures(model_name) {
-        let base = captures["base"].to_string();
-        let effort = captures["effort"].to_ascii_lowercase();
-        return (base, Some(effort));
+    let lower = model_name.to_ascii_lowercase();
+    for effort in ["none", "low", "medium", "high", "xhigh"] {
+        let suffix = format!("-{effort}");
+        if lower.ends_with(&suffix) {
+            let base_len = model_name.len() - suffix.len();
+            if let Some(base) = model_name.get(..base_len) {
+                return (base.to_string(), Some(effort.to_string()));
+            }
+        }
     }
 
     (model_name.to_string(), None)

@@ -14,4 +14,4 @@ pub mod utils;
 pub use base::{Provider, ProviderDef, ProviderInit, ProviderMetadata};
 pub use config::{ProviderConfigError, ProviderConfigExt, ProviderConfigStore, ProviderRuntime};
 pub use errors::ProviderError;
-pub use model::{ModelConfig, ModelConfigError, ThinkingEffort};
+pub use model::{ModelConfig, ModelConfigError, ModelConfigResolver, ThinkingEffort};

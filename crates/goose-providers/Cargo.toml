@@ -43,5 +43,6 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 env-lock = { workspace = true }
+rmcp = { workspace = true, features = ["macros"] }
 tempfile.workspace = true
 test-case = { workspace = true }

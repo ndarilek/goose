@@ -6,6 +6,7 @@ use crate::model::ModelConfig;
 use crate::providers::base::{Provider, MSG_COUNT_FOR_SESSION_NAME_GENERATION};
 use crate::recipe::Recipe;
 use crate::session::extension_data::ExtensionData;
+use crate::utils::safe_truncate;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rmcp::model::Role;
@@ -51,6 +52,157 @@ pub enum SessionType {
 
 static SESSION_STORAGE: LazyLock<Arc<SessionStorage>> =
     LazyLock::new(|| Arc::new(SessionStorage::new(Paths::data_dir())));
+
+async fn generate_session_name(
+    provider: &dyn Provider,
+    session_id: &str,
+    messages: &Conversation,
+) -> Result<String> {
+    let message = Message::user().with_text(session_name_user_text(messages));
+    let result = provider
+        .complete_fast(session_id, SESSION_NAME_PROMPT, &[message], &[])
+        .await?;
+    let raw: String = result
+        .0
+        .content
+        .iter()
+        .filter_map(|content| content.as_text())
+        .collect();
+
+    Ok(sanitize_session_name(&raw))
+}
+
+const SESSION_NAME_PROMPT: &str = "Generate a short title (four words or less) that describes the topic of the user's messages.\nReply with only the title, nothing else. Do not show your reasoning.";
+const SESSION_NAME_BEGIN_MARKER: &str = "---BEGIN USER MESSAGES---";
+const SESSION_NAME_END_MARKER: &str = "---END USER MESSAGES---";
+const SESSION_NAME_SUFFIX: &str = "Generate a short title for the above messages.";
+
+fn initial_user_messages(messages: &Conversation) -> Vec<String> {
+    messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .take(MSG_COUNT_FOR_SESSION_NAME_GENERATION)
+        .map(|m| {
+            m.content
+                .iter()
+                .filter_map(|c| c.filter_for_audience(Role::User))
+                .filter_map(|c| c.as_text().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect()
+}
+
+fn preprompt_context(messages: &Conversation) -> String {
+    messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .take(1)
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| {
+            if c.filter_for_audience(Role::User).is_none() {
+                c.as_text().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn session_name_user_text(messages: &Conversation) -> String {
+    let context = initial_user_messages(messages);
+    let preprompt_context = preprompt_context(messages);
+
+    let preprompt_section = if preprompt_context.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "---BEGIN BACKGROUND CONTEXT (for understanding only, do NOT base the title on this)---\n{}\n---END BACKGROUND CONTEXT---\n\n",
+            preprompt_context
+        )
+    };
+
+    format!(
+        "{}{}\n{}\n{}\n\n{}",
+        preprompt_section,
+        SESSION_NAME_BEGIN_MARKER,
+        context.join("\n"),
+        SESSION_NAME_END_MARKER,
+        SESSION_NAME_SUFFIX,
+    )
+}
+
+fn strip_xml_tags(text: &str) -> String {
+    static BLOCK_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?s)<([a-zA-Z][a-zA-Z0-9_]*)[^>]*>.*?</[a-zA-Z][a-zA-Z0-9_]*>").unwrap()
+    });
+    static TAG_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"</?[a-zA-Z][a-zA-Z0-9_]*[^>]*>").unwrap());
+    let pass1 = BLOCK_RE.replace_all(text, "");
+    TAG_RE.replace_all(&pass1, "").into_owned()
+}
+
+fn extract_short_title(text: &str) -> String {
+    let word_count = text.split_whitespace().count();
+    if word_count <= 8 {
+        return text.to_string();
+    }
+
+    {
+        let mut results = Vec::new();
+        let mut quote_char: Option<char> = None;
+        let mut current = String::new();
+        let mut prev_char: Option<char> = None;
+
+        for ch in text.chars() {
+            match quote_char {
+                None => {
+                    if matches!(ch, '"' | '\'' | '`') {
+                        let after_alnum = prev_char.map(|p| p.is_alphanumeric()).unwrap_or(false);
+                        if !after_alnum {
+                            quote_char = Some(ch);
+                            current.clear();
+                        }
+                    }
+                }
+                Some(q) => {
+                    if ch == q {
+                        let trimmed = current.trim().to_string();
+                        let wc = trimmed.split_whitespace().count();
+                        if (2..=8).contains(&wc) {
+                            results.push(trimmed);
+                        }
+                        quote_char = None;
+                        current.clear();
+                    } else {
+                        current.push(ch);
+                    }
+                }
+            }
+            prev_char = Some(ch);
+        }
+
+        if let Some(title) = results.last() {
+            return title.clone();
+        }
+    }
+
+    if let Some(last) = text.lines().rev().find(|line| !line.trim().is_empty()) {
+        return last.trim().to_string();
+    }
+
+    text.to_string()
+}
+
+fn sanitize_session_name(raw: &str) -> String {
+    let description = strip_xml_tags(raw)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    safe_truncate(&extract_short_title(&description), 100)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Session {
@@ -433,7 +585,7 @@ impl SessionManager {
             .count();
 
         if user_message_count <= MSG_COUNT_FOR_SESSION_NAME_GENERATION {
-            let name = provider.generate_session_name(id, &conversation).await?;
+            let name = generate_session_name(provider.as_ref(), id, &conversation).await?;
             self.update(id)
                 .system_generated_name(name.clone())
                 .apply()

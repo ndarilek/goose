@@ -262,6 +262,9 @@ fn resolve_provider_and_model(
             process::exit(1);
         });
 
+    let resolver = goose::model::ModelConfigResolver::new(
+        goose::providers::runtime::global_provider_runtime(),
+    );
     let model_config = if session_config.resume
         && saved_model_config
             .as_ref()
@@ -272,15 +275,18 @@ fn resolve_provider_and_model(
         if let Some(temp) = recipe_settings.and_then(|s| s.temperature) {
             config = config.with_temperature(Some(temp));
         }
-        config
+        resolver.apply(&provider_name, config).unwrap_or_else(|e| {
+            output::render_error(&format!("Failed to create model configuration: {}", e));
+            process::exit(1);
+        })
     } else {
         let temperature = recipe_settings.and_then(|s| s.temperature);
-        goose::model::ModelConfig::new(&model_name)
+        resolver
+            .resolve(&provider_name, &model_name)
             .unwrap_or_else(|e| {
                 output::render_error(&format!("Failed to create model configuration: {}", e));
                 process::exit(1);
             })
-            .with_canonical_limits(&provider_name)
             .with_temperature(temperature)
     };
 

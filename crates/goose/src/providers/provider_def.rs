@@ -2,11 +2,10 @@ use anyhow::Result;
 use futures::future::BoxFuture;
 use std::path::PathBuf;
 
-use super::inventory::{
-    default_inventory_configured, default_inventory_identity, InventoryIdentityInput,
-};
-use crate::config::{Config, ExtensionConfig};
+use super::inventory::InventoryIdentityInput;
+use crate::config::ExtensionConfig;
 use goose_providers::base::ProviderMetadata;
+use goose_providers::inventory as provider_inventory;
 
 use super::mode::GooseProvider;
 use goose_providers::model::ModelConfig;
@@ -48,12 +47,19 @@ pub trait ProviderDef: Send + Sync {
         Self: Sized,
     {
         let metadata = Self::metadata();
-        Ok(default_inventory_identity(
+        let runtime = crate::providers::runtime::global_provider_runtime();
+        let input = provider_inventory::default_inventory_identity(
             &metadata.name,
             &metadata.name,
             &metadata.config_keys,
-            Config::global(),
-        ))
+            runtime.config.as_ref(),
+        );
+        Ok(InventoryIdentityInput {
+            provider_id: input.provider_id,
+            provider_family: input.provider_family,
+            public_inputs: input.public_inputs,
+            secret_inputs: input.secret_inputs,
+        })
     }
 
     fn inventory_configured() -> bool
@@ -61,6 +67,10 @@ pub trait ProviderDef: Send + Sync {
         Self: Sized,
     {
         let metadata = Self::metadata();
-        default_inventory_configured(&metadata.config_keys, Config::global())
+        let runtime = crate::providers::runtime::global_provider_runtime();
+        provider_inventory::default_inventory_configured(
+            &metadata.config_keys,
+            runtime.config.as_ref(),
+        )
     }
 }
