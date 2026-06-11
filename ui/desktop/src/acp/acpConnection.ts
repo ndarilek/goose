@@ -1,16 +1,17 @@
 import {
   DEFAULT_GOOSE_MCP_HOST_CAPABILITIES,
   GooseClient,
-  type Client,
+  type GooseClientCallbacks,
 } from '@aaif/goose-sdk';
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import packageJson from '../../package.json';
+import { publishAcpSessionUpdate, publishGooseSessionUpdate } from './chatNotifications';
 import { createWebSocketStream } from './createWebSocketStream';
 
 let clientPromise: Promise<GooseClient> | null = null;
 let resolvedClient: GooseClient | null = null;
 
-function createClientCallbacks(): () => Client {
+function createClientCallbacks(): () => GooseClientCallbacks {
   return () => ({
     requestPermission: async () => {
       return {
@@ -19,7 +20,12 @@ function createClientCallbacks(): () => Client {
         },
       };
     },
-    sessionUpdate: async () => {},
+    sessionUpdate: async (notification) => {
+      publishAcpSessionUpdate(notification);
+    },
+    unstable_sessionUpdate: async (notification) => {
+      publishGooseSessionUpdate(notification);
+    },
   });
 }
 
@@ -50,6 +56,7 @@ async function initializeConnection(): Promise<GooseClient> {
       _meta: {
         goose: {
           mcpHostCapabilities: DEFAULT_GOOSE_MCP_HOST_CAPABILITIES,
+          customNotifications: true,
         },
       },
     },
