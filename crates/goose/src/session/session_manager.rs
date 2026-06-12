@@ -1847,8 +1847,7 @@ impl SessionStorage {
                 LIMIT ?
             )
         "#;
-        let sql = std::iter::repeat(branch)
-            .take(session_ids.len())
+        let sql = std::iter::repeat_n(branch, session_ids.len())
             .collect::<Vec<_>>()
             .join(" UNION ALL ");
 
