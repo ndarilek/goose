@@ -24,6 +24,23 @@ pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
 const LAST_MESSAGE_SNIPPET_MAX_CHARS: usize = 128;
+const RECENT_MESSAGE_SNIPPET_SCAN_LIMIT: usize = 64;
+const SESSION_SNIPPET_MODE_ENV: &str = "GOOSE_SESSION_SNIPPET_MODE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionSnippetMode {
+    Persisted,
+    Lazy,
+}
+
+impl SessionSnippetMode {
+    pub(crate) fn from_env() -> Self {
+        match std::env::var(SESSION_SNIPPET_MODE_ENV).as_deref() {
+            Ok("lazy") => Self::Lazy,
+            _ => Self::Persisted,
+        }
+    }
+}
 
 #[derive(
     Debug,
@@ -305,6 +322,15 @@ pub(crate) struct SessionListPage {
     pub(crate) next_cursor: Option<SessionListCursor>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionSnippetHydrationStats {
+    pub(crate) session_count: usize,
+    pub(crate) batches: usize,
+    pub(crate) rows_fetched: usize,
+    pub(crate) messages_deserialized: usize,
+    pub(crate) scan_limit_misses: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 pub(crate) struct SessionListFilters<'a> {
     pub(crate) types: Option<&'a [SessionType]>,
@@ -325,6 +351,17 @@ struct SessionListQuery<'a> {
     filters: SessionListFilters<'a>,
     cursor: Option<&'a SessionListCursor>,
     limit: Option<usize>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RecentMessageRow {
+    row_id: i64,
+    session_id: String,
+    role: String,
+    content_json: String,
+    created_timestamp: i64,
+    metadata_json: Option<String>,
+    message_id: Option<String>,
 }
 
 fn keyword_terms(query: Option<&str>) -> Vec<String> {
@@ -429,6 +466,13 @@ impl SessionManager {
         query: SessionListPageQuery<'_>,
     ) -> Result<SessionListPage> {
         self.storage.list_sessions_paged(query).await
+    }
+
+    pub(crate) async fn hydrate_last_message_snippets(
+        &self,
+        sessions: &mut [Session],
+    ) -> Result<SessionSnippetHydrationStats> {
+        self.storage.hydrate_last_message_snippets(sessions).await
     }
 
     pub async fn list_all_sessions(&self) -> Result<Vec<Session>> {
@@ -1783,6 +1827,123 @@ impl SessionStorage {
             sessions,
             next_cursor,
         })
+    }
+
+    async fn recent_message_rows(
+        pool: &Pool<Sqlite>,
+        session_ids: &[String],
+    ) -> Result<Vec<RecentMessageRow>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let branch = r#"
+            SELECT row_id, session_id, role, content_json, created_timestamp, metadata_json, message_id
+            FROM (
+                SELECT id AS row_id, session_id, role, content_json, created_timestamp, metadata_json, message_id
+                FROM messages
+                WHERE session_id = ?
+                ORDER BY created_timestamp DESC, id DESC
+                LIMIT ?
+            )
+        "#;
+        let sql = std::iter::repeat(branch)
+            .take(session_ids.len())
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
+
+        let mut query = sqlx::query_as::<_, RecentMessageRow>(&sql);
+        for session_id in session_ids {
+            query = query
+                .bind(session_id)
+                .bind(RECENT_MESSAGE_SNIPPET_SCAN_LIMIT as i64);
+        }
+
+        let mut rows = query.fetch_all(pool).await?;
+        rows.sort_by(|left, right| {
+            left.session_id
+                .cmp(&right.session_id)
+                .then_with(|| right.created_timestamp.cmp(&left.created_timestamp))
+                .then_with(|| right.row_id.cmp(&left.row_id))
+        });
+        Ok(rows)
+    }
+
+    fn message_from_recent_row(row: RecentMessageRow) -> Result<Option<Message>> {
+        let role = match row.role.as_str() {
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            _ => return Ok(None),
+        };
+
+        let content = serde_json::from_str(&row.content_json)?;
+        let metadata = row
+            .metadata_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+
+        let mut message = Message::new(role, row.created_timestamp, content);
+        message.metadata = metadata;
+        if let Some(id) = row.message_id {
+            message = message.with_id(id);
+        }
+        Ok(Some(message))
+    }
+
+    async fn hydrate_last_message_snippets(
+        &self,
+        sessions: &mut [Session],
+    ) -> Result<SessionSnippetHydrationStats> {
+        let mut stats = SessionSnippetHydrationStats {
+            session_count: sessions.len(),
+            ..Default::default()
+        };
+        if sessions.is_empty() {
+            return Ok(stats);
+        }
+
+        let pool = self.pool().await?;
+        let session_ids = sessions
+            .iter()
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        let mut snippets = HashMap::with_capacity(session_ids.len());
+
+        let rows = Self::recent_message_rows(pool, &session_ids).await?;
+        stats.batches = 1;
+        stats.rows_fetched = rows.len();
+
+        let mut row_counts = HashMap::<String, usize>::new();
+        for row in rows {
+            *row_counts.entry(row.session_id.clone()).or_default() += 1;
+            if snippets.contains_key(&row.session_id) {
+                continue;
+            }
+
+            let session_id = row.session_id.clone();
+            let Some(message) = Self::message_from_recent_row(row)? else {
+                continue;
+            };
+            stats.messages_deserialized += 1;
+            if let Some(snippet) = message_snippet(&message, LAST_MESSAGE_SNIPPET_MAX_CHARS) {
+                snippets.insert(session_id, snippet);
+            }
+        }
+
+        stats.scan_limit_misses = session_ids
+            .iter()
+            .filter(|session_id| {
+                !snippets.contains_key(*session_id)
+                    && row_counts.get(*session_id).copied().unwrap_or(0)
+                        == RECENT_MESSAGE_SNIPPET_SCAN_LIMIT
+            })
+            .count();
+
+        for session in sessions {
+            session.last_message_snippet = snippets.remove(&session.id);
+        }
+
+        Ok(stats)
     }
 
     async fn list_sessions(&self) -> Result<Vec<Session>> {
@@ -3275,6 +3436,16 @@ mod tests {
             .last_message_snippet
     }
 
+    async fn set_persisted_snippet(sm: &SessionManager, id: &str, snippet: Option<&str>) {
+        let pool = sm.storage().pool().await.unwrap();
+        sqlx::query("UPDATE sessions SET last_message_snippet = ? WHERE id = ?")
+            .bind(snippet)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     fn message_at(mut message: Message, created: i64) -> Message {
         message.created = created;
         message
@@ -3542,5 +3713,267 @@ mod tests {
         .unwrap();
 
         assert_eq!(snippet_of(&sm, &id).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_lazy_last_message_snippets_recompute_from_recent_messages() {
+        use rmcp::model::CallToolRequestParams;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let visible_id = snippet_session(&sm).await;
+
+        sm.add_message(
+            &visible_id,
+            &Message::user().with_text("**raw** _markdown_ subtitle"),
+        )
+        .await
+        .unwrap();
+        for index in 0..3 {
+            sm.add_message(
+                &visible_id,
+                &Message::assistant()
+                    .with_text(format!("hidden summary {index}"))
+                    .with_metadata(MessageMetadata::agent_only()),
+            )
+            .await
+            .unwrap();
+        }
+        set_persisted_snippet(&sm, &visible_id, Some("stale persisted subtitle")).await;
+
+        let empty_id = snippet_session(&sm).await;
+        sm.add_message(
+            &empty_id,
+            &Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+        )
+        .await
+        .unwrap();
+        sm.add_message(
+            &empty_id,
+            &Message::assistant()
+                .with_text("hidden only")
+                .with_metadata(MessageMetadata::agent_only()),
+        )
+        .await
+        .unwrap();
+        set_persisted_snippet(&sm, &empty_id, Some("stale empty subtitle")).await;
+
+        let mut sessions = vec![
+            sm.get_session(&visible_id, false).await.unwrap(),
+            sm.get_session(&empty_id, false).await.unwrap(),
+        ];
+        let stats = sm
+            .hydrate_last_message_snippets(&mut sessions)
+            .await
+            .unwrap();
+        let by_id = sessions
+            .into_iter()
+            .map(|session| (session.id, session.last_message_snippet))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            by_id
+                .get(&visible_id)
+                .and_then(|snippet| snippet.as_deref()),
+            Some("**raw** _markdown_ subtitle")
+        );
+        assert_eq!(by_id.get(&empty_id), Some(&None));
+        assert_eq!(stats.session_count, 2);
+        assert_eq!(stats.batches, 1);
+        assert_eq!(stats.rows_fetched, 6);
+        assert_eq!(stats.scan_limit_misses, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lazy_last_message_snippets_stays_bounded() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        sm.add_message(&id, &Message::user().with_text("older visible text"))
+            .await
+            .unwrap();
+        for index in 0..RECENT_MESSAGE_SNIPPET_SCAN_LIMIT {
+            sm.add_message(
+                &id,
+                &Message::assistant()
+                    .with_text(format!("hidden summary {index}"))
+                    .with_metadata(MessageMetadata::agent_only()),
+            )
+            .await
+            .unwrap();
+        }
+        set_persisted_snippet(&sm, &id, Some("stale persisted subtitle")).await;
+
+        let mut sessions = vec![sm.get_session(&id, false).await.unwrap()];
+        let stats = sm
+            .hydrate_last_message_snippets(&mut sessions)
+            .await
+            .unwrap();
+
+        assert_eq!(sessions[0].last_message_snippet, None);
+        assert_eq!(stats.batches, 1);
+        assert_eq!(stats.rows_fetched, RECENT_MESSAGE_SNIPPET_SCAN_LIMIT);
+        assert_eq!(
+            stats.messages_deserialized,
+            RECENT_MESSAGE_SNIPPET_SCAN_LIMIT
+        );
+        assert_eq!(stats.scan_limit_misses, 1);
+    }
+
+    fn bench_text(session_index: usize, message_index: usize) -> String {
+        let line_count = 10 + ((session_index * 17 + message_index * 13) % 91);
+        let mut text = String::new();
+        for line_index in 0..line_count {
+            text.push_str(&format!(
+                "session {session_index} message {message_index} line {line_index} benchmark text with enough words to resemble a real stored transcript row\n"
+            ));
+        }
+        text
+    }
+
+    async fn seed_session_subtitle_bench(
+        sm: &SessionManager,
+        session_count: usize,
+        messages_per_session: usize,
+    ) {
+        let pool = sm.storage().pool().await.unwrap();
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        for session_index in 0..session_count {
+            let session_id = format!("bench_{session_index:04}");
+            let updated_at = format!(
+                "2026-01-{:02} {:02}:{:02}:00",
+                1 + (session_index / 1440),
+                (session_index / 60) % 24,
+                session_index % 60
+            );
+
+            sqlx::query(
+                "INSERT INTO sessions (id, name, user_set_name, session_type, working_dir, extension_data, goose_mode, updated_at)
+                 VALUES (?, ?, FALSE, ?, ?, '{}', ?, ?)",
+            )
+            .bind(&session_id)
+            .bind(format!("Bench session {session_index}"))
+            .bind(SessionType::Acp.to_string())
+            .bind("/tmp/session-subtitle-bench")
+            .bind(GooseMode::default().to_string())
+            .bind(&updated_at)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            let mut persisted_snippet = None;
+            for message_index in 0..messages_per_session {
+                let text = bench_text(session_index, message_index);
+                let role = if message_index % 2 == 0 {
+                    Role::User
+                } else {
+                    Role::Assistant
+                };
+                let is_recent_hidden = message_index + 6 >= messages_per_session;
+                let mut message = Message::new(
+                    role,
+                    1_700_000_000 + message_index as i64,
+                    vec![MessageContent::text(text)],
+                )
+                .with_id(format!("bench_msg_{session_index}_{message_index}"));
+                if is_recent_hidden {
+                    message = message.with_metadata(MessageMetadata::agent_only());
+                }
+
+                if let Some(snippet) = message_snippet(&message, LAST_MESSAGE_SNIPPET_MAX_CHARS) {
+                    persisted_snippet = Some(snippet);
+                }
+
+                sqlx::query(
+                    "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp, metadata_json)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(message.id.as_deref())
+                .bind(&session_id)
+                .bind(role_to_string(&message.role))
+                .bind(serde_json::to_string(&message.content).unwrap())
+                .bind(message.created)
+                .bind(serde_json::to_string(&message.metadata).unwrap())
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            }
+
+            sqlx::query("UPDATE sessions SET last_message_snippet = ? WHERE id = ?")
+                .bind(persisted_snippet)
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "benchmark-style comparison; run with GOOSE_SESSION_SNIPPET_MODE=persisted|lazy"]
+    async fn session_subtitle_list_bench() {
+        const SESSION_COUNT: usize = 240;
+        const MESSAGES_PER_SESSION: usize = 96;
+        const PAGE_SIZE: usize = 50;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let seed_start = std::time::Instant::now();
+        seed_session_subtitle_bench(&sm, SESSION_COUNT, MESSAGES_PER_SESSION).await;
+        let seed_elapsed = seed_start.elapsed();
+
+        let mode = SessionSnippetMode::from_env();
+        let types = [SessionType::Acp];
+        let total_start = std::time::Instant::now();
+        let list_start = std::time::Instant::now();
+        let mut page = sm
+            .list_sessions_paged(SessionListPageQuery {
+                filters: SessionListFilters {
+                    types: Some(&types),
+                    only_sessions_with_messages: true,
+                    ..Default::default()
+                },
+                cursor: None,
+                page_size: PAGE_SIZE,
+            })
+            .await
+            .unwrap();
+        let list_elapsed = list_start.elapsed();
+
+        let hydrate_start = std::time::Instant::now();
+        let stats = match mode {
+            SessionSnippetMode::Persisted => SessionSnippetHydrationStats {
+                session_count: page.sessions.len(),
+                ..Default::default()
+            },
+            SessionSnippetMode::Lazy => sm
+                .hydrate_last_message_snippets(&mut page.sessions)
+                .await
+                .unwrap(),
+        };
+        let hydrate_elapsed = hydrate_start.elapsed();
+        let total_elapsed = total_start.elapsed();
+        let snippets = page
+            .sessions
+            .iter()
+            .filter(|session| session.last_message_snippet.is_some())
+            .count();
+
+        println!(
+            "session_subtitle_list_bench mode={mode:?} total_sessions={SESSION_COUNT} messages_per_session={MESSAGES_PER_SESSION} total_messages={} page_size={PAGE_SIZE} page_sessions={} snippets={snippets} seed_ms={} list_ms={} hydrate_ms={} total_ms={} batches={} rows_fetched={} messages_deserialized={} scan_limit_misses={} text_lines=10..100 storage=messages.content_json_full_rows scan_limit={RECENT_MESSAGE_SNIPPET_SCAN_LIMIT}",
+            SESSION_COUNT * MESSAGES_PER_SESSION,
+            page.sessions.len(),
+            seed_elapsed.as_millis(),
+            list_elapsed.as_millis(),
+            hydrate_elapsed.as_millis(),
+            total_elapsed.as_millis(),
+            stats.batches,
+            stats.rows_fetched,
+            stats.messages_deserialized,
+            stats.scan_limit_misses
+        );
     }
 }
