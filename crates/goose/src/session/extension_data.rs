@@ -81,7 +81,13 @@ pub trait ExtensionState: Sized + Serialize + for<'de> Deserialize<'de> {
     }
 }
 
-/// TODO extension state implementation
+/// Extension state utilities for session-scoped extension data.
+///
+/// This file provides a generic container (ExtensionData) for storing
+/// versioned extension state as JSON values, plus a small trait
+/// (ExtensionState) to make it convenient for specific extensions to
+/// serialize/deserialize their state and read/write it from/to
+/// ExtensionData.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoState {
     pub content: String,
