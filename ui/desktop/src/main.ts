@@ -2107,6 +2107,36 @@ const registerGlobalShortcuts = () => {
       console.error('Error registering launcher hotkey:', e);
     }
   }
+
+  // Register New Chat shortcuts so they work even when the menu is not focused.
+  if (shortcuts.newChat) {
+    try {
+      globalShortcut.register(shortcuts.newChat, () => {
+        const focusedWindow = BrowserWindow.getFocusedWindow();
+        if (focusedWindow) {
+          focusedWindow.webContents.send('new-chat');
+        } else {
+          // If no window exists, create a new chat window
+          // We intentionally don't await here to keep the handler synchronous.
+          // createNewWindow will handle opening the app if needed.
+          void createNewWindow(app);
+        }
+      });
+    } catch (e) {
+      console.error('Error registering new-chat hotkey:', e);
+    }
+  }
+
+  if (shortcuts.newChatWindow) {
+    try {
+      globalShortcut.register(shortcuts.newChatWindow, () => {
+        // Create a fresh chat window
+        void createNewWindow(app);
+      });
+    } catch (e) {
+      console.error('Error registering new-chat-window hotkey:', e);
+    }
+  }
 };
 
 async function appMain() {
