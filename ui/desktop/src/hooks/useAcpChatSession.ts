@@ -35,6 +35,7 @@ import {
   cancelAcpPermissionRequestsForSession,
   subscribeToAcpPermissionRequests,
 } from '../acp/permissionRequests';
+import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from '../acp/errors';
 import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
 import {
   createAcpSessionNotificationAdapter,
@@ -225,6 +226,23 @@ function pushMessage(currentMessages: Message[], incomingMsg: Message): Message[
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function createAcpCreditsExhaustedMessage(error: AcpCreditsExhaustedError): Message {
+  return {
+    id: uuidv7(),
+    role: 'assistant',
+    created: Math.floor(Date.now() / 1000),
+    content: [
+      {
+        type: 'systemNotification',
+        notificationType: 'creditsExhausted',
+        msg: error.message,
+        ...(error.url ? { data: { top_up_url: error.url } } : {}),
+      },
+    ],
+    metadata: { userVisible: true, agentVisible: false },
+  };
 }
 
 const REDUCED_MOTION_BATCH_INTERVAL = 1000;
@@ -776,6 +794,19 @@ export function useAcpChatSession({
         await acpPromptSession(targetSessionId, userMessage);
         onFinish();
       } catch (error) {
+        const creditsExhaustedError = parseAcpCreditsExhaustedError(error);
+        if (creditsExhaustedError) {
+          dispatch({
+            type: 'SET_MESSAGES',
+            payload: [
+              ...stateRef.current.messages,
+              createAcpCreditsExhaustedMessage(creditsExhaustedError),
+            ],
+          });
+          onFinish();
+          return;
+        }
+
         onFinish('Submit error: ' + errorMessage(error));
       } finally {
         if (activeRequestSessionIdRef.current === targetSessionId) {
