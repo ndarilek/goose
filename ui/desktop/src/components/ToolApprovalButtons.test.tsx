@@ -14,6 +14,10 @@ vi.mock('../acp/permissionRequests', () => ({
   resolveAcpPermissionRequest: vi.fn(),
 }));
 
+vi.mock('../acpChatFeatureFlag', () => ({
+  USE_ACP_CHAT: true,
+}));
+
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
 
