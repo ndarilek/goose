@@ -22,10 +22,11 @@ export function applyToolCall(state: AdapterState, update: ToolCall): AcpChatSta
   const gooseMeta = getGooseMessageMeta(update);
   const message = getOrCreateAssistantMessageForUpdate(state, gooseMeta);
 
-  const existing = message.content.find(
-    (content) => content.type === 'toolRequest' && content.id === update.toolCallId
-  );
-  if (existing) {
+  if (
+    message.content.some(
+      (content) => content.type === 'toolRequest' && content.id === update.toolCallId
+    )
+  ) {
     return messagesChange(state);
   }
 
@@ -57,7 +58,7 @@ export function applyToolCallUpdate(
     return [];
   }
 
-  if (messageWithToolResponse(state, update.toolCallId)) {
+  if (hasToolResponse(state, update.toolCallId)) {
     return messagesChange(state);
   }
 
@@ -123,8 +124,8 @@ function getOrCreateToolResponseMessageForUpdate(
   return message;
 }
 
-function messageWithToolResponse(state: AdapterState, toolCallId: string): Message | undefined {
-  return state.messages.find((message) =>
+function hasToolResponse(state: AdapterState, toolCallId: string): boolean {
+  return state.messages.some((message) =>
     message.content.some((content) => content.type === 'toolResponse' && content.id === toolCallId)
   );
 }
@@ -133,29 +134,26 @@ function toolRequestMetadata(
   update: ToolCall,
   identity: ToolIdentity
 ): Record<string, unknown> | undefined {
-  const metadata: Record<string, unknown> = {};
+  return baseToolMetadata(update, identity);
+}
 
-  if (update.title) {
-    metadata.title = update.title;
+function toolResponseMetadata(
+  update: ToolCallUpdate,
+  identity: ToolIdentity
+): Record<string, unknown> | undefined {
+  const metadata = baseToolMetadata(update, identity) ?? {};
+  if (update.rawOutput !== undefined) {
+    metadata.rawOutput = update.rawOutput;
   }
-  if (update.status) {
-    metadata.status = update.status;
-  }
-  if (identity.extensionName) {
-    metadata.extensionName = identity.extensionName;
-  }
-  if (update.kind) {
-    metadata.kind = update.kind;
-  }
-  if (update.locations) {
-    metadata.locations = update.locations;
+  if (update.content) {
+    metadata.content = update.content;
   }
 
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-function toolResponseMetadata(
-  update: ToolCallUpdate,
+function baseToolMetadata(
+  update: ToolCall | ToolCallUpdate,
   identity: ToolIdentity
 ): Record<string, unknown> | undefined {
   const metadata: Record<string, unknown> = {};
@@ -174,12 +172,6 @@ function toolResponseMetadata(
   }
   if (update.locations) {
     metadata.locations = update.locations;
-  }
-  if (update.rawOutput !== undefined) {
-    metadata.rawOutput = update.rawOutput;
-  }
-  if (update.content) {
-    metadata.content = update.content;
   }
 
   return Object.keys(metadata).length > 0 ? metadata : undefined;
