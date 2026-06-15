@@ -39,7 +39,7 @@ import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from '..
 import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
 import {
   createAcpSessionNotificationAdapter,
-  type AcpChatUpdate,
+  type AcpChatStateChange,
   type AcpSessionNotificationAdapter,
 } from '../acp/sessionNotificationAdapter';
 
@@ -62,7 +62,7 @@ type StreamAction =
   | { type: 'SET_TOKEN_STATE'; payload: TokenState }
   | { type: 'ADD_NOTIFICATION'; payload: NotificationEvent }
   | { type: 'CLEAR_NOTIFICATIONS' }
-  | { type: 'APPLY_ACP_CHAT_UPDATE'; payload: AcpChatUpdate }
+  | { type: 'APPLY_ACP_CHAT_STATE_CHANGE'; payload: AcpChatStateChange }
   | {
       type: 'SESSION_LOADED';
       payload: {
@@ -117,7 +117,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
     case 'CLEAR_NOTIFICATIONS':
       return { ...state, notifications: [] };
 
-    case 'APPLY_ACP_CHAT_UPDATE': {
+    case 'APPLY_ACP_CHAT_STATE_CHANGE': {
       const update = action.payload;
       switch (update.type) {
         case 'messages':
@@ -461,9 +461,9 @@ export function useAcpChatSession({
     createAcpSessionNotificationAdapter()
   );
 
-  const dispatchAcpChatUpdates = useCallback((updates: AcpChatUpdate[]) => {
-    for (const update of updates) {
-      dispatch({ type: 'APPLY_ACP_CHAT_UPDATE', payload: update });
+  const dispatchAcpChatStateChanges = useCallback((chatStateChanges: AcpChatStateChange[]) => {
+    for (const chatStateChange of chatStateChanges) {
+      dispatch({ type: 'APPLY_ACP_CHAT_STATE_CHANGE', payload: chatStateChange });
     }
   }, []);
 
@@ -478,13 +478,13 @@ export function useAcpChatSession({
     }
 
     const unsubscribeAcp = subscribeToAcpSession(sessionId, (notification) => {
-      dispatchAcpChatUpdates(acpAdapterRef.current.apply(notification));
+      dispatchAcpChatStateChanges(acpAdapterRef.current.apply(notification));
     });
     const unsubscribeGoose = subscribeToAcpGooseSession(sessionId, (notification) => {
-      dispatchAcpChatUpdates(acpAdapterRef.current.applyGoose(notification));
+      dispatchAcpChatStateChanges(acpAdapterRef.current.applyGoose(notification));
     });
     const unsubscribePermissionRequests = subscribeToAcpPermissionRequests(sessionId, (request) => {
-      dispatchAcpChatUpdates(acpAdapterRef.current.applyPermissionRequest(request));
+      dispatchAcpChatStateChanges(acpAdapterRef.current.applyPermissionRequest(request));
       dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.WaitingForUserInput });
     });
 
@@ -494,7 +494,7 @@ export function useAcpChatSession({
       unsubscribePermissionRequests();
       cancelAcpPermissionRequestsForSession(sessionId);
     };
-  }, [dispatchAcpChatUpdates, sessionId]);
+  }, [dispatchAcpChatStateChanges, sessionId]);
 
   useEffect(() => {
     return () => {

@@ -14,7 +14,7 @@ import type {
   TokenState,
 } from '../api';
 
-export type AcpChatUpdate =
+export type AcpChatStateChange =
   | { type: 'messages'; messages: Message[] }
   | { type: 'tokenState'; tokenState: Partial<TokenState> }
   | { type: 'sessionInfo'; name?: string };
@@ -34,9 +34,9 @@ const DEFAULT_VISIBLE_MESSAGE_METADATA: Message['metadata'] = {
 };
 
 export interface AcpSessionNotificationAdapter {
-  apply(notification: SessionNotification): AcpChatUpdate[];
-  applyGoose(notification: GooseSessionNotification_unstable): AcpChatUpdate[];
-  applyPermissionRequest(request: RequestPermissionRequest): AcpChatUpdate[];
+  apply(notification: SessionNotification): AcpChatStateChange[];
+  applyGoose(notification: GooseSessionNotification_unstable): AcpChatStateChange[];
+  applyPermissionRequest(request: RequestPermissionRequest): AcpChatStateChange[];
   getMessages(): Message[];
 }
 
@@ -66,7 +66,7 @@ export function createAcpSessionNotificationAdapter(
 function applyAcpSessionNotification(
   state: AdapterState,
   notification: SessionNotification
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   const update = notification.update;
 
   switch (update.sessionUpdate) {
@@ -97,7 +97,7 @@ function applyAcpSessionNotification(
 function applyGooseSessionNotification(
   state: AdapterState,
   notification: GooseSessionNotification_unstable
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   const update = notification.update;
 
   switch (update.sessionUpdate) {
@@ -127,7 +127,7 @@ function applyStatusMessage(
   state: AdapterState,
   sessionId: string,
   update: Extract<GooseSessionNotification_unstable['update'], { sessionUpdate: 'status_message' }>
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   const notificationType = update.status.type === 'notice' ? 'inlineMessage' : 'thinkingMessage';
 
   state.messages.push({
@@ -150,7 +150,7 @@ function applyStatusMessage(
   return [{ type: 'messages', messages: state.messages.map(cloneMessage) }];
 }
 
-function applyToolCall(state: AdapterState, update: ToolCall): AcpChatUpdate[] {
+function applyToolCall(state: AdapterState, update: ToolCall): AcpChatStateChange[] {
   const gooseMeta = getGooseMessageMeta(update);
   const message = getOrCreateAssistantMessageForUpdate(state, gooseMeta);
 
@@ -181,7 +181,7 @@ function applyToolCall(state: AdapterState, update: ToolCall): AcpChatUpdate[] {
   return [{ type: 'messages', messages: state.messages.map(cloneMessage) }];
 }
 
-function applyToolCallUpdate(state: AdapterState, update: ToolCallUpdate): AcpChatUpdate[] {
+function applyToolCallUpdate(state: AdapterState, update: ToolCallUpdate): AcpChatStateChange[] {
   if (update.status !== 'completed' && update.status !== 'failed') {
     return [];
   }
@@ -211,7 +211,7 @@ function applyToolCallUpdate(state: AdapterState, update: ToolCallUpdate): AcpCh
 function applyPermissionRequest(
   state: AdapterState,
   request: RequestPermissionRequest
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   const toolCallId = request.toolCall.toolCallId;
   const existing = state.messages.some((message) =>
     message.content.some(
@@ -301,7 +301,7 @@ function applyContentChunk(
     SessionNotification['update'],
     { sessionUpdate: 'user_message_chunk' | 'agent_message_chunk' }
   >
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   const content = messageContentFromAcpContentBlock(update.content);
   if (!content) {
     return [];
@@ -574,7 +574,7 @@ function permissionPrompt(request: RequestPermissionRequest): string | undefined
 function applyThoughtChunk(
   state: AdapterState,
   update: Extract<SessionNotification['update'], { sessionUpdate: 'agent_thought_chunk' }>
-): AcpChatUpdate[] {
+): AcpChatStateChange[] {
   if (update.content.type !== 'text') {
     return [];
   }
