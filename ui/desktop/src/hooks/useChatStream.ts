@@ -32,6 +32,10 @@ import { useSessionEvents, type SessionEvent } from './useSessionEvents';
 
 const resultsCache = new Map<string, { messages: Message[]; session: Session }>();
 
+export function clearSessionCache(sessionId: string): void {
+  resultsCache.delete(sessionId);
+}
+
 interface UseChatStreamProps {
   sessionId: string;
   onStreamFinish: () => void;
@@ -183,6 +187,13 @@ function pushMessage(currentMessages: Message[], incomingMsg: Message): Message[
     const lastContent = lastMsg.content[lastMsg.content.length - 1];
     const newContent = incomingMsg.content[incomingMsg.content.length - 1];
 
+    if (incomingMsg.metadata?.inference) {
+      lastMsg.metadata = {
+        ...lastMsg.metadata,
+        inference: incomingMsg.metadata.inference,
+      };
+    }
+
     if (
       lastContent?.type === 'text' &&
       newContent?.type === 'text' &&
@@ -236,6 +247,7 @@ function createEventProcessor(
   let latestChatState: ChatState = ChatState.Streaming;
   let lastBatchUpdate = Date.now();
   let hasPendingUpdate = false;
+  let pendingInference: Message['metadata']['inference'] | undefined;
 
   const flushBatchedUpdates = () => {
     if (reduceMotion && hasPendingUpdate) {
@@ -271,12 +283,54 @@ function createEventProcessor(
     }
   };
 
+  const flushPendingInference = () => {
+    if (!pendingInference) {
+      return;
+    }
+
+    for (let i = currentMessages.length - 1; i >= 0; i--) {
+      const message = currentMessages[i];
+      if (message.role === 'assistant' && message.metadata.userVisible) {
+        currentMessages = [
+          ...currentMessages.slice(0, i),
+          {
+            ...message,
+            metadata: {
+              ...message.metadata,
+              inference: message.metadata.inference ?? pendingInference,
+            },
+          },
+          ...currentMessages.slice(i + 1),
+        ];
+        break;
+      }
+    }
+    pendingInference = undefined;
+  };
+
   // Returns true if the event is terminal (Finish or Error)
   const processEvent = (event: SessionEvent): boolean => {
     switch (event.type) {
       case 'Message': {
-        const msg = (event as Record<string, unknown>).message as Message;
+        let msg = (event as Record<string, unknown>).message as Message;
         const tokenState = (event as Record<string, unknown>).token_state as TokenState;
+
+        if (msg.content.length === 0 && msg.metadata?.inference) {
+          pendingInference = msg.metadata.inference;
+          return false;
+        }
+
+        if (pendingInference && msg.role === 'assistant' && msg.metadata.userVisible) {
+          msg = {
+            ...msg,
+            metadata: {
+              ...msg.metadata,
+              inference: msg.metadata.inference ?? pendingInference,
+            },
+          };
+          pendingInference = undefined;
+        }
+
         currentMessages = pushMessage(currentMessages, msg);
 
         const hasToolConfirmation = msg.content.some(
@@ -301,7 +355,9 @@ function createEventProcessor(
         return false;
       }
       case 'Error': {
+        flushPendingInference();
         flushBatchedUpdates();
+        dispatch({ type: 'SET_MESSAGES', payload: currentMessages });
         const errorMsg = String((event as Record<string, unknown>).error ?? '');
         if (errorMsg.includes('too far behind') && onReloadNeeded) {
           // Server indicated we missed events — end streaming without setting
@@ -315,7 +371,9 @@ function createEventProcessor(
         return true;
       }
       case 'Finish': {
+        flushPendingInference();
         flushBatchedUpdates();
+        dispatch({ type: 'SET_MESSAGES', payload: currentMessages });
         onFinish();
         return true;
       }
@@ -694,7 +752,9 @@ export function useChatStream({
           },
         },
       });
-      window.dispatchEvent(new CustomEvent(AppEvents.SESSION_EXTENSIONS_LOADED));
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_EXTENSIONS_LOADED, { detail: { sessionId } })
+      );
       onSessionLoaded?.();
       return;
     }
@@ -722,7 +782,9 @@ export function useChatStream({
         const extensionResults = resumeData?.extension_results;
 
         showExtensionLoadResults(extensionResults);
-        window.dispatchEvent(new CustomEvent(AppEvents.SESSION_EXTENSIONS_LOADED));
+        window.dispatchEvent(
+          new CustomEvent(AppEvents.SESSION_EXTENSIONS_LOADED, { detail: { sessionId } })
+        );
 
         const pendingRequestId = pendingReattachRequestIdRef.current;
         const reattachedToActiveRequest = activeRequestIdRef.current !== null;

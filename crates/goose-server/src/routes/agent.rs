@@ -1,3 +1,4 @@
+use crate::routes::config_management::resolve_provider_model_info;
 use crate::routes::errors::ErrorResponse;
 use crate::routes::recipe_utils::{
     apply_recipe_to_agent, build_recipe_with_parameter_values, load_recipe_by_id, validate_recipe,
@@ -479,27 +480,35 @@ async fn update_from_session(
             status: StatusCode::INTERNAL_SERVER_ERROR,
         })?;
     if let Some(recipe) = session.recipe {
-        match build_recipe_with_parameter_values(
-            &recipe,
-            session.user_recipe_values.unwrap_or_default(),
-        )
-        .await
-        {
-            Ok(Some(recipe)) => {
-                if let Some(prompt) = apply_recipe_to_agent(&agent, &recipe, true).await {
-                    agent
-                        .extend_system_prompt("recipe".to_string(), prompt)
-                        .await;
+        if session.session_type == SessionType::Scheduled {
+            if let Some(prompt) = apply_recipe_to_agent(&agent, &recipe, true).await {
+                agent
+                    .extend_system_prompt("recipe".to_string(), prompt)
+                    .await;
+            }
+        } else {
+            match build_recipe_with_parameter_values(
+                &recipe,
+                session.user_recipe_values.unwrap_or_default(),
+            )
+            .await
+            {
+                Ok(Some(recipe)) => {
+                    if let Some(prompt) = apply_recipe_to_agent(&agent, &recipe, true).await {
+                        agent
+                            .extend_system_prompt("recipe".to_string(), prompt)
+                            .await;
+                    }
                 }
-            }
-            Ok(None) => {
-                // Recipe has missing parameters
-            }
-            Err(e) => {
-                return Err(ErrorResponse {
-                    message: e.to_string(),
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                });
+                Ok(None) => {
+                    // Recipe has missing parameters
+                }
+                Err(e) => {
+                    return Err(ErrorResponse {
+                        message: e.to_string(),
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                    });
+                }
             }
         }
     }
@@ -595,7 +604,7 @@ async fn update_agent_provider(
         }
     };
 
-    let model_config = ModelConfig::new(&model)
+    let mut model_config = ModelConfig::new(&model)
         .map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
@@ -603,8 +612,15 @@ async fn update_agent_provider(
             )
         })?
         .with_canonical_limits(&payload.provider)
-        .with_context_limit(payload.context_limit)
-        .with_request_params(payload.request_params);
+        .with_context_limit(payload.context_limit);
+
+    if let Some(request_params) = payload.request_params {
+        model_config = model_config.with_merged_request_params(request_params);
+    }
+    let model_info = resolve_provider_model_info(&payload.provider, &model)
+        .await
+        .map_err(|e| (e.status, e.message))?;
+    model_config.reasoning = Some(model_info.reasoning);
 
     let extensions =
         EnabledExtensionsState::for_session(state.session_manager(), &payload.session_id, config)
@@ -700,7 +716,9 @@ async fn agent_add_extension(
     State(state): State<Arc<AppState>>,
     Json(request): Json<AddExtensionRequest>,
 ) -> Result<StatusCode, ErrorResponse> {
+    #[cfg(feature = "telemetry")]
     let extension_name = request.config.name();
+
     let agent = state.get_agent(request.session_id.clone()).await?;
 
     agent
@@ -826,27 +844,35 @@ async fn restart_agent_internal(
     })?;
 
     if let Some(ref recipe) = session.recipe {
-        match build_recipe_with_parameter_values(
-            recipe,
-            session.user_recipe_values.clone().unwrap_or_default(),
-        )
-        .await
-        {
-            Ok(Some(recipe)) => {
-                if let Some(prompt) = apply_recipe_to_agent(&agent, &recipe, true).await {
-                    agent
-                        .extend_system_prompt("recipe".to_string(), prompt)
-                        .await;
+        if session.session_type == SessionType::Scheduled {
+            if let Some(prompt) = apply_recipe_to_agent(&agent, recipe, true).await {
+                agent
+                    .extend_system_prompt("recipe".to_string(), prompt)
+                    .await;
+            }
+        } else {
+            match build_recipe_with_parameter_values(
+                recipe,
+                session.user_recipe_values.clone().unwrap_or_default(),
+            )
+            .await
+            {
+                Ok(Some(recipe)) => {
+                    if let Some(prompt) = apply_recipe_to_agent(&agent, &recipe, true).await {
+                        agent
+                            .extend_system_prompt("recipe".to_string(), prompt)
+                            .await;
+                    }
                 }
-            }
-            Ok(None) => {
-                // Recipe has missing parameters
-            }
-            Err(e) => {
-                return Err(ErrorResponse {
-                    message: e.to_string(),
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                });
+                Ok(None) => {
+                    // Recipe has missing parameters
+                }
+                Err(e) => {
+                    return Err(ErrorResponse {
+                        message: e.to_string(),
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                    });
+                }
             }
         }
     }

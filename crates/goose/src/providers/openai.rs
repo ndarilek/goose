@@ -3,10 +3,6 @@ use super::base::{
     ConfigKey, ModelInfo, Provider, ProviderDef, ProviderMetadata, DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
 use super::embedding::{EmbeddingCapable, EmbeddingRequest, EmbeddingResponse};
-use super::errors::ProviderError;
-use super::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
-};
 use super::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
 };
@@ -15,12 +11,18 @@ use super::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_openai_compat, stream_responses_compat,
 };
 use super::retry::ProviderRetry;
-use super::utils::ImageFormat;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::conversation::token_usage::ProviderUsage;
+use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::{
+    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
+};
+use goose_providers::formats::openai::{is_openai_responses_model, ModelConfigParams};
+use goose_providers::images::ImageFormat;
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
@@ -298,6 +300,53 @@ impl OpenAiProvider {
         }
     }
 
+    /// Resolve the API key from a declarative provider config.
+    ///
+    /// Returns `Some(key)` if a key is found, `None` if the key is optional/missing,
+    /// or an error if the key is required but missing/unreadable.
+    ///
+    /// The `get_secret` closure is used to look up the secret by key name. This allows
+    /// testing without depending on `Config::global()`.
+    pub fn resolve_api_key(
+        config: &DeclarativeProviderConfig,
+        get_secret: &dyn Fn(&str) -> Result<String, crate::config::ConfigError>,
+    ) -> Result<Option<String>> {
+        if config.api_key_env.is_empty() {
+            return Ok(None);
+        }
+
+        match get_secret(&config.api_key_env) {
+            Ok(key) => Ok(Some(key)),
+            Err(e) => {
+                use crate::config::ConfigError;
+                match e {
+                    ConfigError::NotFound(_) => {
+                        if config.requires_auth {
+                            anyhow::bail!(
+                                "Required API key {} is not set. Configure it via `goose configure` or set the {} environment variable.",
+                                config.api_key_env,
+                                config.api_key_env
+                            );
+                        }
+                        Ok(None)
+                    }
+                    other => {
+                        if config.requires_auth {
+                            anyhow::bail!("Failed to read {}: {}", config.api_key_env, other);
+                        } else {
+                            tracing::warn!(
+                                "Failed to read optional API key {}: {}. Proceeding without authentication.",
+                                config.api_key_env,
+                                other
+                            );
+                            Ok(None)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn from_custom_config(
         model: ModelConfig,
         config: DeclarativeProviderConfig,
@@ -323,22 +372,7 @@ impl OpenAiProvider {
         }
 
         let global_config = crate::config::Config::global();
-
-        let api_key: Option<String> = if config.requires_auth && !config.api_key_env.is_empty() {
-            Some(global_config.get_secret::<String>(&config.api_key_env).map_err(|e| {
-                use crate::config::ConfigError;
-                match e {
-                    ConfigError::NotFound(_) => anyhow::anyhow!(
-                        "Required API key {} is not set. Configure it via `goose configure` or set the {} environment variable.",
-                        config.api_key_env,
-                        config.api_key_env
-                    ),
-                    other => anyhow::anyhow!("Failed to read {}: {}", config.api_key_env, other),
-                }
-            })?)
-        } else {
-            None
-        };
+        let api_key = Self::resolve_api_key(&config, &|key| global_config.get_secret(key))?;
 
         let url = url::Url::parse(&config.base_url)
             .map_err(|e| anyhow::anyhow!("Invalid base URL '{}': {}", config.base_url, e))?;
@@ -444,7 +478,7 @@ impl OpenAiProvider {
     }
 
     fn is_responses_model(model_name: &str) -> bool {
-        super::utils::is_openai_responses_model(model_name)
+        is_openai_responses_model(model_name)
     }
 
     fn should_use_responses_api(model_name: &str, base_path: &str) -> bool {
@@ -479,21 +513,49 @@ impl OpenAiProvider {
         "lmstudio",
         "mistral",
         "moonshot",
+        "nearai",
         "ovhcloud",
     ];
 
-    fn sanitize_request_for_compat(&self, mut payload: serde_json::Value) -> serde_json::Value {
-        if !Self::PROVIDERS_NEEDING_MAX_TOKENS_REMAP.contains(&self.name.as_str()) {
-            return payload;
-        }
+    const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] = &["nearai"];
 
+    fn sanitize_request_for_compat(&self, mut payload: serde_json::Value) -> serde_json::Value {
         if let Some(obj) = payload.as_object_mut() {
-            if let Some(value) = obj.remove("max_completion_tokens") {
-                obj.entry("max_tokens").or_insert(value);
+            if Self::PROVIDERS_NEEDING_MAX_TOKENS_REMAP.contains(&self.name.as_str()) {
+                if let Some(value) = obj.remove("max_completion_tokens") {
+                    obj.entry("max_tokens").or_insert(value);
+                }
+            }
+
+            if Self::PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS.contains(&self.name.as_str()) {
+                let model_name = obj.get("model").and_then(|model| model.as_str());
+                if !model_name.is_some_and(Self::is_responses_model) {
+                    obj.remove("reasoning_effort");
+                }
+
+                if let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) {
+                    for message in messages {
+                        if message
+                            .get("role")
+                            .and_then(|role| role.as_str())
+                            .is_some_and(|role| role == "developer")
+                        {
+                            message["role"] = serde_json::Value::String("system".to_string());
+                        }
+                    }
+                }
             }
         }
 
         payload
+    }
+
+    fn should_use_responses_api_for_provider(&self, model_name: &str) -> bool {
+        if Self::PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS.contains(&self.name.as_str()) {
+            return false;
+        }
+
+        Self::should_use_responses_api(model_name, &self.base_path)
     }
 
     fn map_base_path(base_path: &str, target: &str, fallback: &str) -> String {
@@ -716,7 +778,7 @@ impl Provider for OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        if Self::should_use_responses_api(&model_config.model_name, &self.base_path) {
+        if self.should_use_responses_api_for_provider(&model_config.model_name) {
             let mut payload = create_responses_request(model_config, system, messages, tools)?;
             payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
 
@@ -761,8 +823,7 @@ impl Provider for OpenAiProvider {
 
                 let message = responses_api_to_message(&responses_api_response)?;
                 let usage_data = get_responses_usage(&responses_api_response);
-                let usage =
-                    super::base::ProviderUsage::new(model_config.model_name.clone(), usage_data);
+                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
 
                 log.write(
                     &serde_json::to_value(&message).unwrap_or_default(),
@@ -773,7 +834,13 @@ impl Provider for OpenAiProvider {
             }
         } else {
             let payload = create_request_with_options(
-                model_config,
+                ModelConfigParams {
+                    model_name: model_config.model_name.as_str(),
+                    thinking_effort: model_config.thinking_effort(),
+                    temperature: model_config.temperature,
+                    max_tokens: model_config.max_tokens,
+                    request_params: model_config.request_params.as_ref(),
+                },
                 system,
                 messages,
                 tools,
@@ -811,8 +878,7 @@ impl Provider for OpenAiProvider {
                 })?;
 
                 let usage_data = get_usage(json.get("usage").unwrap_or(&serde_json::Value::Null));
-                let usage =
-                    super::base::ProviderUsage::new(model_config.model_name.clone(), usage_data);
+                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
 
                 log.write(
                     &serde_json::to_value(&message).unwrap_or_default(),
@@ -826,34 +892,120 @@ impl Provider for OpenAiProvider {
 }
 
 fn parse_custom_headers(s: String) -> HashMap<String, String> {
-    let swapped: String = s
-        .chars()
-        .map(|c| match c {
-            ',' => ' ',
-            ' ' => ',',
-            c => c,
-        })
-        .collect();
-    shlex::split(&swapped)
-        .unwrap_or_default()
+    split_custom_headers(&s)
         .into_iter()
-        .filter_map(|token| {
-            let restored: String = token
-                .chars()
-                .map(|c| match c {
-                    ',' => ' ',
-                    ' ' => ',',
-                    c => c,
-                })
-                .collect();
-            let (key, value) = restored.split_once('=')?;
+        .filter_map(|header| {
+            let (key, value) = header.split_once('=')?;
             let key = key.trim();
             if key.is_empty() {
                 return None;
             }
-            Some((key.to_string(), value.trim().to_string()))
+            Some((key.to_string(), parse_custom_header_value(value)))
         })
         .collect()
+}
+
+fn split_custom_headers(s: &str) -> Vec<String> {
+    let mut headers = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for c in s.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+
+        match c {
+            '\\' => {
+                current.push(c);
+                escaped = true;
+            }
+            '"' => {
+                current.push(c);
+                in_quotes = !in_quotes;
+            }
+            ',' if !in_quotes => {
+                headers.push(current);
+                current = String::new();
+            }
+            _ => current.push(c),
+        }
+    }
+
+    headers.push(current);
+    headers
+}
+
+fn parse_custom_header_value(value: &str) -> String {
+    let value = value.trim();
+    if let Some(quoted) = value.strip_prefix('"') {
+        return parse_quoted_custom_header_value(quoted);
+    }
+    unescape_custom_header_value(value, false)
+        .trim()
+        .to_string()
+}
+
+fn parse_quoted_custom_header_value(value: &str) -> String {
+    let mut parsed = String::new();
+    let mut escaped = false;
+
+    for c in value.chars() {
+        if escaped {
+            push_unescaped_custom_header_char(&mut parsed, c, true);
+            escaped = false;
+            continue;
+        }
+
+        match c {
+            '\\' => escaped = true,
+            '"' => break,
+            _ => parsed.push(c),
+        }
+    }
+
+    if escaped {
+        parsed.push('\\');
+    }
+
+    parsed
+}
+
+fn unescape_custom_header_value(value: &str, quoted: bool) -> String {
+    let mut parsed = String::new();
+    let mut escaped = false;
+
+    for c in value.chars() {
+        if escaped {
+            push_unescaped_custom_header_char(&mut parsed, c, quoted);
+            escaped = false;
+            continue;
+        }
+
+        if c == '\\' {
+            escaped = true;
+        } else {
+            parsed.push(c);
+        }
+    }
+
+    if escaped {
+        parsed.push('\\');
+    }
+
+    parsed
+}
+
+fn push_unescaped_custom_header_char(parsed: &mut String, c: char, quoted: bool) {
+    if c == ',' || c == '\\' || (quoted && c == '"') {
+        parsed.push(c);
+    } else {
+        parsed.push('\\');
+        parsed.push(c);
+    }
 }
 
 #[async_trait]
@@ -1015,6 +1167,61 @@ mod tests {
 
         let result = provider.sanitize_request_for_compat(payload.clone());
         assert_eq!(result, payload);
+    }
+
+    #[test]
+    fn sanitize_nearai_reasoning_chat_params() {
+        let provider = make_provider("nearai");
+        let payload = json!({
+            "model": "Qwen/Qwen3.6-35B-A3B-FP8",
+            "messages": [
+                {
+                    "role": "developer",
+                    "content": "system instructions"
+                },
+                {
+                    "role": "user",
+                    "content": "hello"
+                }
+            ],
+            "reasoning_effort": "medium",
+            "max_completion_tokens": 16384
+        });
+
+        let result = provider.sanitize_request_for_compat(payload);
+        let obj = result.as_object().unwrap();
+
+        assert!(!obj.contains_key("reasoning_effort"));
+        assert!(!obj.contains_key("max_completion_tokens"));
+        assert_eq!(obj.get("max_tokens").unwrap(), &json!(16384));
+        assert_eq!(obj["messages"][0]["role"], "system");
+        assert_eq!(obj["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn sanitize_nearai_preserves_openai_reasoning_effort() {
+        let provider = make_provider("nearai");
+        let payload = json!({
+            "model": "openai/gpt-5",
+            "messages": [],
+            "reasoning_effort": "medium",
+            "max_completion_tokens": 16384
+        });
+
+        let result = provider.sanitize_request_for_compat(payload);
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(obj.get("reasoning_effort"), Some(&json!("medium")));
+        assert!(!obj.contains_key("max_completion_tokens"));
+        assert_eq!(obj.get("max_tokens").unwrap(), &json!(16384));
+    }
+
+    #[test]
+    fn nearai_uses_chat_completions_for_openai_reasoning_models() {
+        let provider = make_provider("nearai");
+
+        assert!(!provider.should_use_responses_api_for_provider("openai/gpt-5"));
+        assert!(!provider.should_use_responses_api_for_provider("openai/o3"));
     }
 
     #[test]
@@ -1242,6 +1449,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_custom_headers_with_escaped_separators_and_backslashes() {
+        let headers = parse_custom_headers(
+            r"x-tags=a\,b,x-path=C:\temp,x-slash=a\\b,x-note=Bob's".to_string(),
+        );
+        assert_eq!(headers.get("x-tags").unwrap(), "a,b");
+        assert_eq!(headers.get("x-path").unwrap(), r"C:\temp");
+        assert_eq!(headers.get("x-slash").unwrap(), r"a\b");
+        assert_eq!(headers.get("x-note").unwrap(), "Bob's");
+    }
+
+    #[test]
+    fn parse_custom_headers_with_escaped_quotes_in_quoted_values() {
+        let headers = parse_custom_headers(r#"x-meta="{\"a\":1,\"b\":2}", x-id=1"#.to_string());
+        assert_eq!(headers.get("x-meta").unwrap(), r#"{"a":1,"b":2}"#);
+        assert_eq!(headers.get("x-id").unwrap(), "1");
+    }
+
+    #[test]
+    fn parse_custom_headers_allows_whitespace_before_separator() {
+        let headers = parse_custom_headers(r#"x-tags="a,b" , x-other=1"#.to_string());
+        assert_eq!(headers.get("x-tags").unwrap(), "a,b");
+        assert_eq!(headers.get("x-other").unwrap(), "1");
+    }
+
+    #[test]
     fn from_custom_config_rejects_static_only_without_models() {
         let config = base_declarative_config(vec![], Some(false));
         let err =
@@ -1253,6 +1485,85 @@ mod tests {
         assert!(
             msg.contains("dynamic_models: false"),
             "error message should mention dynamic_models: false; got: {msg}"
+        );
+    }
+
+    // ── resolve_api_key tests ──────────────────────────────────────────────
+
+    fn config_with_key(api_key_env: &str, requires_auth: bool) -> DeclarativeProviderConfig {
+        let mut config = base_declarative_config(vec![], None);
+        config.api_key_env = api_key_env.to_string();
+        config.requires_auth = requires_auth;
+        config
+    }
+
+    #[test]
+    fn resolve_api_key_empty_env_returns_none() {
+        let config = config_with_key("", true);
+        assert_eq!(
+            OpenAiProvider::resolve_api_key(&config, &|_| unreachable!()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_missing_with_requires_auth_bails() {
+        let config = config_with_key("MY_KEY", true);
+        let err = OpenAiProvider::resolve_api_key(&config, &|_| {
+            Err(crate::config::ConfigError::NotFound("x".into()))
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("MY_KEY"),
+            "error should mention the key name; got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_missing_without_requires_auth_returns_none() {
+        let config = config_with_key("MY_KEY", false);
+        assert_eq!(
+            OpenAiProvider::resolve_api_key(&config, &|_| Err(
+                crate::config::ConfigError::NotFound("x".into())
+            ))
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_present_returns_value() {
+        let config = config_with_key("MY_KEY", true);
+        assert_eq!(
+            OpenAiProvider::resolve_api_key(&config, &|_| Ok("secret".into())).unwrap(),
+            Some("secret".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_other_error_bails_when_required() {
+        let config = config_with_key("MY_KEY", true);
+        let err = OpenAiProvider::resolve_api_key(&config, &|_| {
+            Err(crate::config::ConfigError::KeyringError("ring fail".into()))
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("MY_KEY"),
+            "error should mention the key name; got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_other_error_warns_and_returns_none_when_optional() {
+        let config = config_with_key("MY_KEY", false);
+        assert_eq!(
+            OpenAiProvider::resolve_api_key(&config, &|_| Err(
+                crate::config::ConfigError::KeyringError("ring fail".into())
+            ))
+            .unwrap(),
+            None
         );
     }
 }

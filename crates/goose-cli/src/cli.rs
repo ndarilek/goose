@@ -29,6 +29,7 @@ use crate::commands::schedule::{
     handle_schedule_sessions,
 };
 use crate::commands::session::{handle_session_list, handle_session_remove};
+use crate::commands::skills::handle_skills_list;
 use crate::recipes::extract_from_cli::extract_recipe_info_from_cli;
 use crate::recipes::recipe::{explain_recipe, render_recipe_as_yaml};
 use crate::session::{build_session, SessionBuilderConfig};
@@ -558,9 +559,13 @@ enum SessionCommand {
         )]
         relays: Vec<String>,
     },
-    #[command(about = "Import a session from JSON or an encrypted Nostr share link")]
+    #[command(
+        about = "Import a session from JSON, a Claude Code / Codex / Pi .jsonl, or an encrypted Nostr share link"
+    )]
     Import {
-        #[arg(help = "Path to a JSON session export, or a goose://sessions/nostr share link")]
+        #[arg(
+            help = "Path to a goose session export, a Claude Code, Codex, or Pi .jsonl transcript, or a goose://sessions/nostr share link"
+        )]
         input: String,
 
         #[arg(long = "nostr", help = "Treat input as an encrypted Nostr share link")]
@@ -697,6 +702,13 @@ enum PluginCommand {
         #[arg(help = "Name of the installed plugin to update")]
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommand {
+    /// List all skills available to the goose agent
+    #[command(about = "List all skills available to the goose agent")]
+    List,
 }
 
 #[derive(Subcommand)]
@@ -910,6 +922,13 @@ enum Command {
         command: RecipeCommand,
     },
 
+    /// Skill utilities
+    #[command(about = "Skill utilities")]
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
+
     /// Manage plugins
     #[command(about = "Manage plugins")]
     Plugin {
@@ -935,6 +954,7 @@ enum Command {
     },
 
     /// Update the goose CLI version
+    #[cfg(feature = "update")]
     #[command(about = "Update the goose CLI version")]
     Update {
         /// Update to canary version
@@ -968,6 +988,28 @@ enum Command {
         #[command(subcommand)]
         command: TermCommand,
     },
+
+    /// Launch the goose terminal UI (TUI)
+    #[cfg(feature = "tui")]
+    #[command(
+        about = "Launch the goose terminal UI",
+        long_about = "Launch the goose terminal UI (the @aaif/goose npm package).\n\
+                      \n\
+                      Resolution order:\n  \
+                      1. GOOSE_TUI_SCRIPT, if set to an existing dist/tui.js\n  \
+                      2. A local checkout's ui/text/dist/tui.js (dev workflow)\n  \
+                      3. `npx --yes --package <spec> -- goose-tui` (deployed installs)\n\
+                      \n\
+                      Override the npm spec via GOOSE_TUI_NPM_SPEC (default: @aaif/goose@latest).\n\
+                      Local script mode requires `node` on PATH; npx mode requires `npx` on PATH.\n\
+                      Any extra arguments are passed through to the TUI."
+    )]
+    Tui {
+        /// Arguments forwarded to the TUI
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Manage local inference models
     #[cfg(feature = "local-inference")]
     #[command(about = "Manage local inference models", visible_alias = "lm")]
@@ -986,6 +1028,105 @@ enum Command {
 
         #[arg(long, default_value = "goose", help = "Provide a custom binary name")]
         bin_name: String,
+    },
+
+    /// Local code review.
+    ///
+    /// Discovers `**/.agents/checks/*.md` subagent reviewers and
+    /// `**/.agents/REVIEW.md` scoped prompt overrides, builds a review
+    /// request from the working tree (or an explicit diff range), and
+    /// runs the review through goose.
+    #[command(about = "Review the current diff using goose")]
+    Review {
+        /// Diff range to review (e.g. "main...HEAD"). Defaults to the working
+        /// tree vs HEAD.
+        #[arg(value_name = "RANGE")]
+        range: Option<String>,
+
+        /// Path to a Markdown file with a custom base review prompt. Replaces
+        /// the embedded default prompt.
+        #[arg(long = "prompt", value_name = "FILE")]
+        prompt: Option<PathBuf>,
+
+        /// Default model used for the main review agent and for any check
+        /// that does not declare its own `model:` in frontmatter.
+        #[arg(long = "model", value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Provider for the main review agent.
+        #[arg(long = "provider", value_name = "PROVIDER")]
+        provider: Option<String>,
+
+        /// Force every discovered check to use this model, regardless of
+        /// the check's own `model:` field.
+        #[arg(long = "override-model", value_name = "MODEL")]
+        override_model: Option<String>,
+
+        /// Default `turn-limit` for orchestrated main-pass subprocesses and
+        /// for checks that do not declare their own. Does not cap the legacy
+        /// `--no-orchestrate` in-process main agent.
+        #[arg(long = "turn-limit", value_name = "N")]
+        turn_limit: Option<usize>,
+
+        /// Print the assembled review prompt and discovered checks instead of
+        /// running the review.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+
+        /// Suppress non-result output from the underlying agent.
+        #[arg(long, short = 'q')]
+        quiet: bool,
+
+        /// Disable the Rust-driven parallel orchestrator and fall back to
+        /// the single-prompt path that asks the main agent to delegate
+        /// each check via `delegate(... async: true ...)`. The default
+        /// orchestrator dispatches one `goose run` subprocess per check
+        /// (capped at 4 concurrent), bounding wall-clock to the slowest
+        /// single check rather than waiting on the model to issue
+        /// dispatches.
+        #[arg(long = "no-orchestrate")]
+        no_orchestrate: bool,
+
+        /// Additional free-form instructions to prepend to the review
+        /// (e.g. PR intent, commit-message context, "this is a refactor,
+        /// flag any behavior change"). Mirrors `amp review --instructions`
+        /// for drop-in compatibility with existing reviewer wrappers.
+        #[arg(long = "instructions", short = 'i', value_name = "TEXT")]
+        instructions: Option<String>,
+
+        /// Restrict the review to a specific set of files. Other files in
+        /// the diff are still passed to the agent for context but are
+        /// excluded from the assembled diff sent to checks. Mirrors
+        /// `amp review --files`.
+        #[arg(long = "files", short = 'f', value_name = "FILE", num_args = 1..)]
+        files: Vec<String>,
+
+        /// Only run checks whose `name` matches one of these. Other
+        /// discovered checks are skipped. Mirrors `amp review --check-filter`.
+        #[arg(long = "check-filter", short = 'c', value_name = "NAME", num_args = 1..)]
+        check_filter: Vec<String>,
+
+        /// Alternate directory to search for `.agents/checks/*.md` instead
+        /// of the repo root. Mirrors `amp review --check-scope`.
+        #[arg(long = "check-scope", short = 's', value_name = "DIR")]
+        check_scope: Option<PathBuf>,
+
+        /// Skip the main correctness pass and only run check subagents.
+        /// Mirrors `amp review --checks-only`.
+        #[arg(long = "checks-only")]
+        checks_only: bool,
+
+        /// Print only the diff summary; skip the full review.
+        /// Mirrors `amp review --summary-only`.
+        #[arg(long = "summary-only")]
+        summary_only: bool,
+
+        /// Minimum severity to display. Findings below this rank are
+        /// dropped from the output. Default is `medium`, matching
+        /// Amp's CLI which hides `low` from review output. Pass
+        /// `--severity low` to surface every finding.
+        #[arg(long = "severity", value_name = "LEVEL", default_value = "medium")]
+        severity: String,
     },
 
     #[command(
@@ -1150,13 +1291,18 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Run { .. }) => "run",
         Some(Command::Gateway { .. }) => "gateway",
         Some(Command::Schedule { .. }) => "schedule",
+        #[cfg(feature = "update")]
         Some(Command::Update { .. }) => "update",
         Some(Command::Recipe { .. }) => "recipe",
+        Some(Command::Skills { .. }) => "skills",
         Some(Command::Plugin { .. }) => "plugin",
         Some(Command::Term { .. }) => "term",
+        #[cfg(feature = "tui")]
+        Some(Command::Tui { .. }) => "tui",
         #[cfg(feature = "local-inference")]
         Some(Command::LocalModels { .. }) => "local-models",
         Some(Command::Completion { .. }) => "completion",
+        Some(Command::Review { .. }) => "review",
         Some(Command::ValidateExtensions { .. }) => "validate-extensions",
         None => "default_session",
     }
@@ -1180,7 +1326,7 @@ async fn handle_serve_command(host: String, port: u16, builtins: Vec<String>) ->
     use goose::config::paths::Paths;
     use std::net::SocketAddr;
     use std::sync::Arc;
-    use tracing::info;
+    use tracing::{info, warn};
 
     let builtins = if builtins.is_empty() {
         vec!["developer".to_string()]
@@ -1207,12 +1353,18 @@ async fn handle_serve_command(host: String, port: u16, builtins: Vec<String>) ->
         goose_platform: GoosePlatform::GooseCli,
         additional_source_roots,
     }));
-    let secret_key = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
+    let env_secret = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
         .ok()
         .map(|secret| secret.trim().to_string())
-        .filter(|secret| !secret.is_empty())
-        .unwrap_or_else(generate_serve_secret_key);
-    let router = create_router(server, secret_key);
+        .filter(|secret| !secret.is_empty());
+    let require_token = env_secret.is_some();
+    if !require_token {
+        warn!(
+            "{GOOSE_SERVER_SECRET_KEY_ENV} is not set; the ACP endpoint will accept unauthenticated connections"
+        );
+    }
+    let secret_key = env_secret.unwrap_or_else(generate_serve_secret_key);
+    let router = create_router(server, secret_key, require_token);
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
     info!("Starting ACP server on {}", addr);
@@ -1676,6 +1828,12 @@ fn handle_recipe_subcommand(command: RecipeCommand) -> Result<()> {
     }
 }
 
+async fn handle_skills_subcommand(command: SkillsCommand) -> Result<()> {
+    match command {
+        SkillsCommand::List => handle_skills_list().await,
+    }
+}
+
 async fn handle_term_subcommand(command: TermCommand) -> Result<()> {
     match command {
         TermCommand::Init {
@@ -1693,7 +1851,7 @@ async fn handle_term_subcommand(command: TermCommand) -> Result<()> {
 async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> {
     use goose::providers::local_inference::hf_models;
     use goose::providers::local_inference::local_model_registry::{
-        get_registry, model_id_from_repo, LocalModelEntry,
+        get_registry, mmproj_local_path, model_id_from_repo, LocalModelEntry,
     };
 
     match command {
@@ -1730,10 +1888,28 @@ async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> 
         }
         LocalModelsCommand::Download { spec } => {
             println!("Resolving {}...", spec);
-            let (repo_id, file) = hf_models::resolve_model_spec(&spec).await?;
+            let (repo_id, resolved) = hf_models::resolve_model_spec_full(&spec).await?;
+            if resolved.files.len() > 1 {
+                anyhow::bail!(
+                    "Model '{}' is sharded ({} files) — download it from the desktop UI",
+                    spec,
+                    resolved.files.len()
+                );
+            }
+            let mmproj = resolved.mmproj;
+            let file = resolved.files.into_iter().next().unwrap();
             let model_id = model_id_from_repo(&repo_id, &file.quantization);
             let local_path =
                 goose::config::paths::Paths::in_data_dir("models").join(&file.filename);
+            let mmproj_path = mmproj
+                .as_ref()
+                .map(|mmproj| mmproj_local_path(&repo_id, &mmproj.filename));
+            let mmproj_source_url = mmproj.as_ref().map(|mmproj| mmproj.download_url.clone());
+            let mmproj_size_bytes = mmproj.as_ref().map_or(0, |mmproj| mmproj.size_bytes);
+            let mut download_files = vec![(file.download_url.clone(), local_path.clone())];
+            if let Some(mmproj) = mmproj {
+                download_files.push((mmproj.download_url, mmproj_path.clone().unwrap()));
+            }
 
             println!(
                 "Downloading {} ({})...",
@@ -1758,9 +1934,10 @@ async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> 
                 source_url: file.download_url.clone(),
                 settings: Default::default(),
                 size_bytes: file.size_bytes,
-                mmproj_path: None,
-                mmproj_source_url: None,
-                mmproj_size_bytes: 0,
+                mmproj_path,
+                mmproj_source_url,
+                mmproj_size_bytes,
+                mmproj_checked: true,
                 shard_files: vec![],
             };
 
@@ -1773,11 +1950,16 @@ async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> 
 
             // Download
             let manager = goose::download_manager::get_download_manager();
+            let hf_token = goose::providers::huggingface_auth::resolve_token_async()
+                .await
+                .ok()
+                .flatten();
             manager
-                .download_model(
+                .download_model_sharded_with_bearer_token(
                     format!("{}-model", model_id),
-                    file.download_url,
-                    local_path,
+                    download_files,
+                    file.size_bytes + mmproj_size_bytes,
+                    hf_token,
                     None,
                 )
                 .await?;
@@ -1978,6 +2160,7 @@ pub async fn cli() -> anyhow::Result<()> {
         }
         Some(Command::Gateway { command }) => handle_gateway_command(command).await,
         Some(Command::Schedule { command }) => handle_schedule_command(command).await,
+        #[cfg(feature = "update")]
         Some(Command::Update {
             canary,
             reconfigure,
@@ -1986,10 +2169,52 @@ pub async fn cli() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Recipe { command }) => handle_recipe_subcommand(command),
+        Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
         Some(Command::Plugin { command }) => handle_plugin_subcommand(command),
         Some(Command::Term { command }) => handle_term_subcommand(command).await,
+        #[cfg(feature = "tui")]
+        Some(Command::Tui { args }) => crate::commands::tui::handle_tui(args),
         #[cfg(feature = "local-inference")]
         Some(Command::LocalModels { command }) => handle_local_models_command(command).await,
+        Some(Command::Review {
+            range,
+            prompt,
+            model,
+            provider,
+            override_model,
+            turn_limit,
+            dry_run,
+            quiet,
+            no_orchestrate,
+            instructions,
+            files,
+            check_filter,
+            check_scope,
+            checks_only,
+            summary_only,
+            severity,
+        }) => {
+            use crate::commands::review::{handle_review, ReviewOptions};
+            handle_review(ReviewOptions {
+                range,
+                prompt_file: prompt,
+                default_model: model,
+                provider,
+                override_model,
+                default_turn_limit: turn_limit,
+                dry_run,
+                quiet,
+                no_orchestrate,
+                instructions,
+                files,
+                check_filter,
+                check_scope,
+                checks_only,
+                summary_only,
+                severity,
+            })
+            .await
+        }
         Some(Command::ValidateExtensions { file }) => {
             use goose::agents::validate_extensions::validate_bundled_extensions;
             match validate_bundled_extensions(&file) {
