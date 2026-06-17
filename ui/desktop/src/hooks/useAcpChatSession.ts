@@ -41,6 +41,7 @@ import {
 } from '../acp/elicitationRequests';
 import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from '../acp/errors';
 import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
+import { acpForkSession } from '../acp/sessions';
 import {
   createAcpSessionNotificationAdapter,
   type AcpChatStateChange,
@@ -1164,31 +1165,14 @@ export function useAcpChatSession({
       dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.Thinking });
 
       try {
-        const { forkSession } = await import('../api');
         const message = currentState.messages.find((m) => m.id === messageId);
 
         if (!message) {
           throw new Error(`Message with id ${messageId} not found in current messages`);
         }
 
-        const response = await forkSession({
-          path: {
-            session_id: sessionId,
-          },
-          body: {
-            timestamp: message.created,
-            truncate: true,
-            copy: editType === 'fork',
-          },
-          throwOnError: true,
-        });
-
-        const targetSessionId = response.data?.sessionId;
-        if (!targetSessionId) {
-          throw new Error('No session ID returned from fork');
-        }
-
         if (editType === 'fork') {
+          const targetSessionId = await acpForkSession(sessionId, message.created);
           dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.Idle });
           const event = new CustomEvent(AppEvents.SESSION_FORKED, {
             detail: {
@@ -1200,7 +1184,24 @@ export function useAcpChatSession({
           window.dispatchEvent(event);
           window.electron.logInfo(`Dispatched session-forked event for session ${targetSessionId}`);
         } else {
-          const { getSession } = await import('../api');
+          const { forkSession } = await import('../api');
+          const response = await forkSession({
+            path: {
+              session_id: sessionId,
+            },
+            body: {
+              timestamp: message.created,
+              truncate: true,
+              copy: false,
+            },
+            throwOnError: true,
+          });
+
+          const targetSessionId = response.data?.sessionId;
+          if (!targetSessionId) {
+            throw new Error('No session ID returned from fork');
+          }
+
           const sessionResponse = await getSession({
             path: { session_id: targetSessionId },
             throwOnError: true,
