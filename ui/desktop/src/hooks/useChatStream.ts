@@ -33,6 +33,38 @@ import type { UseChatSessionParams, UseChatSessionResult } from './useChatSessio
 
 const resultsCache = new Map<string, { messages: Message[]; session: Session }>();
 
+export function clearSessionCache(sessionId: string): void {
+  resultsCache.delete(sessionId);
+}
+
+interface UseChatStreamProps {
+  sessionId: string;
+  onStreamFinish: () => void;
+  onSessionLoaded?: () => void;
+}
+
+interface UseChatStreamReturn {
+  session?: Session;
+  messages: Message[];
+  chatState: ChatState;
+  setChatState: (state: ChatState) => void;
+  handleSubmit: (input: UserInput) => Promise<void>;
+  submitElicitationResponse: (
+    elicitationId: string,
+    userData: Record<string, unknown>
+  ) => Promise<void>;
+  setRecipeUserParams: (values: Record<string, string>) => Promise<void>;
+  stopStreaming: () => void;
+  sessionLoadError?: string;
+  tokenState: TokenState;
+  notifications: Map<string, NotificationEvent[]>;
+  onMessageUpdate: (
+    messageId: string,
+    newContent: string,
+    editType?: 'fork' | 'edit'
+  ) => Promise<void>;
+}
+
 interface StreamState {
   messages: Message[];
   session: Session | undefined;
