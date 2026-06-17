@@ -1461,11 +1461,7 @@ impl Agent {
                     // makes the contract: Ok(empty) on accept, Err on reject.
                     ActionRequiredManager::global()
                         .submit_response(id.clone(), user_data.clone())
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to submit elicitation response: {}", e);
-                            anyhow!("Failed to submit elicitation response: {}", e)
-                        })?;
+                        .await?;
                     session_manager
                         .add_message(&session_config.id, &user_message)
                         .await?;
