@@ -3,6 +3,7 @@ import type { RequestPermissionRequest, SessionNotification } from '@agentclient
 import { describe, expect, it } from 'vitest';
 import type { Message, MessageContent } from '../../api';
 import type { NotificationEvent } from '../../types/message';
+import type { AcpElicitationRequest } from '../elicitationRequests';
 import {
   createAcpSessionNotificationAdapter,
   type AcpChatStateChange,
@@ -483,6 +484,55 @@ describe('createAcpSessionNotificationAdapter', () => {
           toolName: 'edit_file',
           arguments: { path: 'README.md' },
           prompt: 'Allow editing README.md?',
+        },
+      });
+    });
+  });
+
+  describe('applyElicitationRequest', () => {
+    it('maps form elicitation requests to action-required elicitation messages', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      const request: AcpElicitationRequest = {
+        id: 'acp_elicitation_1',
+        sessionId: SESSION_ID,
+        request: {
+          mode: 'form',
+          sessionId: SESSION_ID,
+          message: 'Choose a project',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project name',
+              },
+            },
+            required: ['project'],
+          },
+        },
+      };
+
+      const stateChanges = adapter.applyElicitationRequest(request);
+      const messages = expectOnlyMessagesChange(stateChanges);
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe('assistant');
+      expect(firstContent(messages[0])).toMatchObject({
+        type: 'actionRequired',
+        data: {
+          actionType: 'elicitation',
+          id: 'acp_elicitation_1',
+          message: 'Choose a project',
+          requested_schema: {
+            type: 'object',
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project name',
+              },
+            },
+            required: ['project'],
+          },
         },
       });
     });

@@ -13,8 +13,8 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {
-      react: resolve(__dirname, 'node_modules/react'),
-      'react-dom': resolve(__dirname, 'node_modules/react-dom'),
+      react: resolve(__dirname, '../node_modules/react'),
+      'react-dom': resolve(__dirname, '../node_modules/react-dom'),
     },
   },
 

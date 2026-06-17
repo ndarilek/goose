@@ -19,7 +19,6 @@ import {
 
 import {
   createUserMessage,
-  createElicitationResponseMessage,
   getCompactingMessage,
   getThinkingMessage,
   NotificationEvent,
@@ -35,6 +34,11 @@ import {
   cancelAcpPermissionRequestsForSession,
   subscribeToAcpPermissionRequests,
 } from '../acp/permissionRequests';
+import {
+  cancelAcpElicitationRequestsForSession,
+  resolveAcpElicitationRequest,
+  subscribeToAcpElicitationRequests,
+} from '../acp/elicitationRequests';
 import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from '../acp/errors';
 import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
 import {
@@ -493,12 +497,21 @@ export function useAcpChatSession({
       dispatchAcpChatStateChanges(acpAdapterRef.current.applyPermissionRequest(request));
       dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.WaitingForUserInput });
     });
+    const unsubscribeElicitationRequests = subscribeToAcpElicitationRequests(
+      sessionId,
+      (request) => {
+        dispatchAcpChatStateChanges(acpAdapterRef.current.applyElicitationRequest(request));
+        dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.WaitingForUserInput });
+      }
+    );
 
     return () => {
       unsubscribeAcp();
       unsubscribeGoose();
       unsubscribePermissionRequests();
+      unsubscribeElicitationRequests();
       cancelAcpPermissionRequestsForSession(sessionId);
+      cancelAcpElicitationRequestsForSession(sessionId);
     };
   }, [dispatchAcpChatStateChanges, sessionId]);
 
@@ -1057,26 +1070,11 @@ export function useAcpChatSession({
         return;
       }
 
-      // An elicitation response unblocks an in-flight tool call on the original
-      // request's SSE stream — don't start a new stream or flip chat state.
-      const responseMessage = createElicitationResponseMessage(elicitationId, userData);
-      const nextMessages = [...currentState.messages, responseMessage];
-      dispatch({ type: 'SET_MESSAGES', payload: nextMessages });
-
-      try {
-        await sessionReply({
-          path: { id: sessionId },
-          body: {
-            request_id: uuidv7(),
-            user_message: responseMessage,
-          },
-          throwOnError: true,
-        });
-      } catch (error) {
-        onFinish('Submit error: ' + errorMessage(error));
+      if (!resolveAcpElicitationRequest(sessionId, elicitationId, userData)) {
+        console.error('No pending ACP elicitation request found', { sessionId, elicitationId });
       }
     },
-    [sessionId, onFinish]
+    [sessionId]
   );
 
   const setRecipeUserParams = useCallback(
@@ -1142,6 +1140,7 @@ export function useAcpChatSession({
       });
     } else if (requestSessionId) {
       cancelAcpPermissionRequestsForSession(requestSessionId);
+      cancelAcpElicitationRequestsForSession(requestSessionId);
       acpCancelPrompt(requestSessionId).catch((e) => {
         console.warn('Failed to cancel ACP prompt:', e);
       });
