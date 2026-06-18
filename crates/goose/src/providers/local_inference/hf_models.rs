@@ -974,6 +974,20 @@ mod tests {
     }
 
     #[test]
+    fn mlx_download_filenames_excludes_unsafe_paths() {
+        let siblings = vec![
+            sibling("model.safetensors"),
+            sibling("config.json"),
+            sibling("../../etc/cron.d/evil.safetensors"),
+            sibling("/absolute/config.json"),
+        ];
+
+        let filenames = mlx_download_filenames(&siblings);
+
+        assert_eq!(filenames, vec!["model.safetensors", "config.json"]);
+    }
+
+    #[test]
     fn test_parse_quantization() {
         assert_eq!(parse_quantization("Model-Q4_K_M.gguf"), "Q4_K_M");
         assert_eq!(parse_quantization("Model-Q8_0.gguf"), "Q8_0");
@@ -1802,6 +1816,9 @@ fn merge_model_info(existing: &mut HfModelInfo, duplicate: HfModelInfo) {
 }
 
 fn should_download_for_mlx(filename: &str) -> bool {
+    if !is_safe_relative_path(filename) {
+        return false;
+    }
     filename.ends_with(".safetensors")
         || filename == "config.json"
         || is_standalone_mlx_tokenizer_file(filename)
