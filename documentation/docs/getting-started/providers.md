@@ -283,7 +283,7 @@ Need to connect to multiple OpenAI-compatible endpoints? [Configure custom provi
 | `OPENAI_HOST` | No | Custom endpoint URL (defaults to api.openai.com) |
 | `OPENAI_ORGANIZATION` | No | Organization ID for usage tracking and governance |
 | `OPENAI_PROJECT` | No | Project identifier for resource management |
-| `OPENAI_CUSTOM_HEADERS` | No | Additional headers to include in the request. Can be set via environment variable, configuration file, or CLI, in the format `HEADER_A=VALUE_A,HEADER_B=VALUE_B`. |
+| `OPENAI_CUSTOM_HEADERS` | No | Additional headers to include in the request. Can be set via environment variable, configuration file, or CLI, in the format `HEADER_A=VALUE_A,HEADER_B=VALUE_B`. Escape commas in values as `\,` and literal backslashes as `\\`. |
 
 #### Example Configurations
 
@@ -318,7 +318,7 @@ Need to connect to multiple OpenAI-compatible endpoints? [Configure custom provi
     OPENAI_API_KEY=your-api-key
     OPENAI_ORGANIZATION=org-id123
     OPENAI_PROJECT=compliance-approved
-    OPENAI_CUSTOM_HEADERS="X-Header-A=abc,X-Header-B=def"
+    OPENAI_CUSTOM_HEADERS="X-Header-A=abc,X-Header-B=value\,with\,commas"
     ```
   </TabItem>
 </Tabs>

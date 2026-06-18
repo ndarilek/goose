@@ -826,32 +826,43 @@ impl Provider for OpenAiProvider {
 }
 
 fn parse_custom_headers(s: String) -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    let mut rest = s.as_str();
-    while !rest.is_empty() {
-        let Some((key, after_eq)) = rest.split_once('=') else {
-            break;
-        };
-        let key = key.trim();
-        let (value, remainder) = if let Some(after_quote) = after_eq.strip_prefix('"') {
-            match after_quote.split_once('"') {
-                Some((value, after_close)) => {
-                    (value, after_close.strip_prefix(',').unwrap_or(after_close))
+    split_custom_header_entries(&s)
+        .into_iter()
+        .filter_map(|header| {
+            let mut parts = header.splitn(2, '=');
+            let key = parts.next().map(|s| s.trim().to_string())?;
+            let value = parts.next().map(|s| s.trim().to_string())?;
+            Some((key, value))
+        })
+        .collect()
+}
+
+fn split_custom_header_entries(s: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut entry = String::new();
+    let mut chars = s.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some(',') => entry.push(','),
+                Some('\\') => entry.push('\\'),
+                Some(next) => {
+                    entry.push('\\');
+                    entry.push(next);
                 }
-                None => (after_quote, ""),
+                None => entry.push('\\'),
             }
+        } else if ch == ',' {
+            entries.push(entry);
+            entry = String::new();
         } else {
-            match after_eq.split_once(',') {
-                Some((value, after_comma)) => (value, after_comma),
-                None => (after_eq, ""),
-            }
-        };
-        if !key.is_empty() {
-            headers.insert(key.to_string(), value.trim().to_string());
+            entry.push(ch);
         }
-        rest = remainder;
     }
-    headers
+
+    entries.push(entry);
+    entries
 }
 
 #[async_trait]
@@ -1230,13 +1241,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_custom_headers_with_commas_in_quoted_values() {
+    fn parse_custom_headers_with_escaped_commas_and_backslashes() {
         let headers = parse_custom_headers(
-            r#"Authorization=Bearer token,x-tags="a,b,c",x-path=C:\temp"#.to_string(),
+            r"Authorization=Bearer token,x-tags=a\,b\,c,x-path=C:\\temp,x-regex=\d+".to_string(),
         );
         assert_eq!(headers.get("Authorization").unwrap(), "Bearer token");
         assert_eq!(headers.get("x-tags").unwrap(), "a,b,c");
         assert_eq!(headers.get("x-path").unwrap(), r"C:\temp");
+        assert_eq!(headers.get("x-regex").unwrap(), r"\d+");
     }
 
     #[test]
