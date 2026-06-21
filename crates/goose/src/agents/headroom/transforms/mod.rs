@@ -9,6 +9,7 @@ pub use crate::agents::headroom::adaptive_sizer;
 pub mod anchor_selector;
 pub mod content_detector;
 pub mod detection;
+pub mod diff_compressor;
 pub mod log_compressor;
 pub mod safety;
 pub mod search_compressor;
@@ -20,6 +21,7 @@ pub use content_detector::{
     detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult,
 };
 pub use detection::detect;
+pub use diff_compressor::{DiffCompressionResult, DiffCompressor, DiffCompressorConfig};
 pub use log_compressor::{
     LogCompressionResult, LogCompressor, LogCompressorConfig, LogFormat, LogLevel,
 };

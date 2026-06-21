@@ -8,8 +8,9 @@
 //! A [`ContentRouter`] detects the content type of a tool output and routes it
 //! to the best compressor:
 //!
-//! - build/test output → [`log_compressor::LogCompressor`]
-//! - grep / ripgrep results → [`search_compressor::SearchCompressor`]
+//! - build/test output → [`transforms::log_compressor::LogCompressor`]
+//! - grep / ripgrep results → [`transforms::search_compressor::SearchCompressor`]
+//! - unified diffs → [`transforms::diff_compressor::DiffCompressor`]
 //! - everything else → passed through unchanged
 //!
 //! Compression is reversible in spirit: the compressed output always carries an
@@ -26,17 +27,17 @@ pub mod smart_crusher;
 pub mod tokenizer;
 pub mod transforms;
 
-use std::sync::LazyLock;
-
-use regex::Regex;
-
-use log_compressor::{LogCompressor, LogCompressorConfig};
-use search_compressor::{SearchCompressor, SearchCompressorConfig};
+use transforms::content_detector;
+use transforms::detection;
+use transforms::diff_compressor::{DiffCompressor, DiffCompressorConfig};
+use transforms::log_compressor::{LogCompressor, LogCompressorConfig};
+use transforms::search_compressor::{SearchCompressor, SearchCompressorConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentType {
     SearchResults,
     BuildOutput,
+    GitDiff,
     PlainText,
 }
 
@@ -82,6 +83,7 @@ impl CompressionResult {
 pub struct ContentRouter {
     log: LogCompressor,
     search: SearchCompressor,
+    diff: DiffCompressor,
     /// `bias` multiplier passed to the adaptive sizer (>1 keeps more).
     bias: f64,
 }
@@ -97,6 +99,7 @@ impl ContentRouter {
         Self {
             log: LogCompressor::new(LogCompressorConfig::default()),
             search: SearchCompressor::new(SearchCompressorConfig::default()),
+            diff: DiffCompressor::new(DiffCompressorConfig::default()),
             bias: 1.0,
         }
     }
@@ -110,111 +113,44 @@ impl ContentRouter {
     /// (e.g. the tool's arguments / the user's intent) for search results.
     pub fn compress(&self, content: &str, context: &str) -> CompressionResult {
         let original_chars = content.len();
-        match detect_content_type(content) {
-            ContentType::SearchResults => {
-                let compressed = self.search.compress(content, context, self.bias).compressed;
+        let detected_type = detection::detect(content);
+
+        match detected_type {
+            content_detector::ContentType::SearchResults => {
+                let (result, _stats) = self.search.compress(content, context, self.bias);
                 CompressionResult {
-                    compressed_chars: compressed.len(),
-                    compressed,
+                    compressed_chars: result.compressed.len(),
+                    compressed: result.compressed,
                     original_chars,
                     content_type: ContentType::SearchResults,
                     strategy: "search_compressor",
                 }
             }
-            ContentType::BuildOutput => {
-                let compressed = self.log.compress(content, self.bias).compressed;
+            content_detector::ContentType::BuildOutput => {
+                let (result, _stats) = self.log.compress(content, self.bias);
                 CompressionResult {
-                    compressed_chars: compressed.len(),
-                    compressed,
+                    compressed_chars: result.compressed.len(),
+                    compressed: result.compressed,
                     original_chars,
                     content_type: ContentType::BuildOutput,
                     strategy: "log_compressor",
                 }
             }
-            ContentType::PlainText => {
+            content_detector::ContentType::GitDiff => {
+                let result = self.diff.compress(content, context);
+                CompressionResult {
+                    compressed_chars: result.compressed.len(),
+                    compressed: result.compressed,
+                    original_chars,
+                    content_type: ContentType::GitDiff,
+                    strategy: "diff_compressor",
+                }
+            }
+            _ => {
+                // JsonArray, SourceCode, Html, PlainText all pass through
                 CompressionResult::passthrough(content, ContentType::PlainText)
             }
         }
-    }
-}
-
-static SEARCH_RESULT_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[^\s:]+:\d+:").unwrap());
-
-static LOG_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    vec![
-        Regex::new(r"(?i)\b(ERROR|FAIL|FAILED|FATAL|CRITICAL)\b").unwrap(),
-        Regex::new(r"(?i)\b(WARN|WARNING)\b").unwrap(),
-        Regex::new(r"(?i)\b(INFO|DEBUG|TRACE)\b").unwrap(),
-        Regex::new(r"^\s*\d{4}-\d{2}-\d{2}").unwrap(),
-        Regex::new(r"^\s*\[\d{2}:\d{2}:\d{2}\]").unwrap(),
-        Regex::new(r"^={3,}|^-{3,}").unwrap(),
-        Regex::new(r"^\s*PASSED|^\s*FAILED|^\s*SKIPPED").unwrap(),
-        Regex::new(r"^npm ERR!|^yarn error|^cargo error").unwrap(),
-        Regex::new(r"Traceback \(most recent call last\)").unwrap(),
-        Regex::new(r"^\s*at\s+[\w.$]+\(").unwrap(),
-    ]
-});
-
-/// Detect the content type of a tool output. Search results win over logs when
-/// both match because the `file:line:` shape is more specific.
-pub fn detect_content_type(content: &str) -> ContentType {
-    if content.trim().is_empty() {
-        return ContentType::PlainText;
-    }
-
-    if let Some(t) = try_detect_search(content) {
-        return t;
-    }
-    if let Some(t) = try_detect_log(content) {
-        return t;
-    }
-    ContentType::PlainText
-}
-
-fn try_detect_search(content: &str) -> Option<ContentType> {
-    let lines: Vec<&str> = content.split('\n').take(100).collect();
-    let mut matching = 0u32;
-    for line in &lines {
-        if !line.trim().is_empty() && SEARCH_RESULT_PATTERN.is_match(line) {
-            matching += 1;
-        }
-    }
-    if matching == 0 {
-        return None;
-    }
-    let non_empty = lines.iter().filter(|l| !l.trim().is_empty()).count() as u32;
-    if non_empty == 0 {
-        return None;
-    }
-    let ratio = matching as f64 / non_empty as f64;
-    if ratio >= 0.3 {
-        Some(ContentType::SearchResults)
-    } else {
-        None
-    }
-}
-
-fn try_detect_log(content: &str) -> Option<ContentType> {
-    let lines: Vec<&str> = content.split('\n').take(200).collect();
-    let mut pattern_matches = 0u32;
-    for line in &lines {
-        if LOG_PATTERNS.iter().any(|p| p.is_match(line)) {
-            pattern_matches += 1;
-        }
-    }
-    if pattern_matches == 0 {
-        return None;
-    }
-    let non_empty = lines.iter().filter(|l| !l.trim().is_empty()).count() as u32;
-    if non_empty == 0 {
-        return None;
-    }
-    let ratio = pattern_matches as f64 / non_empty as f64;
-    if ratio >= 0.1 {
-        Some(ContentType::BuildOutput)
-    } else {
-        None
     }
 }
 
@@ -225,13 +161,15 @@ mod tests {
     #[test]
     fn detects_search_results() {
         let content = "src/a.py:1:foo\nsrc/b.py:2:bar\nsrc/c.py:3:baz";
-        assert_eq!(detect_content_type(content), ContentType::SearchResults);
+        let r = ContentRouter::new().compress(content, "");
+        assert_eq!(r.content_type, ContentType::SearchResults);
     }
 
     #[test]
     fn detects_build_output() {
         let content = "INFO starting\nERROR boom happened\nWARNING careful\nINFO done";
-        assert_eq!(detect_content_type(content), ContentType::BuildOutput);
+        let r = ContentRouter::new().compress(content, "");
+        assert_eq!(r.content_type, ContentType::BuildOutput);
     }
 
     #[test]
@@ -253,5 +191,19 @@ mod tests {
         assert!(r.did_compress());
         assert!(r.compressed.contains("the build broke on widget"));
         assert!(r.tokens_saved_estimate() > 0);
+    }
+
+    #[test]
+    fn router_compresses_search_results() {
+        let mut lines: Vec<String> = vec![];
+        for i in 0..50 {
+            lines.push(format!("src/module.rs:{}:    let x = {};", i, i));
+        }
+        lines.push("src/target.rs:42:fn important() {".to_string());
+        let content = lines.join("\n");
+        let r = ContentRouter::new().compress(&content, "");
+        assert_eq!(r.content_type, ContentType::SearchResults);
+        assert!(r.did_compress());
+        assert!(r.compressed.contains("important"));
     }
 }
