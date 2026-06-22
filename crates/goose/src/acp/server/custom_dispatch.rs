@@ -12,6 +12,70 @@ impl GooseAcpAgent {
         self.handle_custom_request(cx, method, params).await
     }
 
+    #[custom_method(
+        SetSessionModeRequest,
+        method = "session/set_mode",
+        include_schema = false
+    )]
+    async fn dispatch_set_session_mode(
+        &self,
+        cx: &ConnectionTo<Client>,
+        req: SetSessionModeRequest,
+    ) -> Result<SetSessionModeResponse, agent_client_protocol::Error> {
+        let session_id = req.session_id.clone();
+        let mode_id = req.mode_id.clone();
+        let response = self.on_set_mode(&session_id.0, &mode_id.0).await?;
+        cx.send_notification(SessionNotification::new(
+            session_id,
+            SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(mode_id)),
+        ))?;
+        Ok(response)
+    }
+
+    #[custom_method(
+        SetSessionModelRequest,
+        method = "session/set_model",
+        include_schema = false
+    )]
+    async fn dispatch_set_session_model(
+        &self,
+        cx: &ConnectionTo<Client>,
+        req: SetSessionModelRequest,
+    ) -> Result<SetSessionModelResponse, agent_client_protocol::Error> {
+        let session_id = req.session_id.clone();
+        let response = self.on_set_model(&session_id.0, &req.model_id.0).await?;
+        let (notification, _) = self.build_config_update(&session_id).await?;
+        cx.send_notification(notification)?;
+        Ok(response)
+    }
+
+    #[custom_method(ListSessionsRequest, method = "session/list", include_schema = false)]
+    async fn dispatch_list_sessions(
+        &self,
+        _cx: &ConnectionTo<Client>,
+        req: ListSessionsRequest,
+    ) -> Result<ListSessionsResponse, agent_client_protocol::Error> {
+        self.on_list_sessions(req).await
+    }
+
+    #[custom_method(CloseSessionRequest, method = "session/close", include_schema = false)]
+    async fn dispatch_close_session(
+        &self,
+        _cx: &ConnectionTo<Client>,
+        req: CloseSessionRequest,
+    ) -> Result<CloseSessionResponse, agent_client_protocol::Error> {
+        self.on_close_session(&req.session_id.0).await
+    }
+
+    #[custom_method(ForkSessionRequest, method = "session/fork", include_schema = false)]
+    async fn dispatch_fork_session(
+        &self,
+        cx: &ConnectionTo<Client>,
+        req: ForkSessionRequest,
+    ) -> Result<ForkSessionResponse, agent_client_protocol::Error> {
+        self.on_fork_session(cx, req).await
+    }
+
     #[custom_method(AddSessionExtensionRequest)]
     async fn dispatch_add_session_extension(
         &self,

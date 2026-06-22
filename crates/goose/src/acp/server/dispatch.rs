@@ -95,7 +95,7 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                     Ok(())
                 })
                 .await
-                // set_config_option (SACP 11) and legacy set_mode/set_model; custom _goose/* in otherwise.
+                // set_config_option runs inline here; all other non-core methods are routed through custom dispatch.
                 .if_request({
                     let agent = agent.clone();
                     let cx = cx.clone();
@@ -282,98 +282,6 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                             }
 
                             debug!(target: "perf", sid = %sid, ms = t_handler.elapsed().as_millis() as u64, config_id = %config_id, "perf: set_config_option done");
-                            Ok(())
-                        })?;
-                        Ok(())
-                    }
-                })
-                .await
-                .if_request({
-                    let agent = agent.clone();
-                    let cx = cx.clone();
-                    |req: SetSessionModeRequest, responder: Responder<SetSessionModeResponse>| async move {
-                        let cx_spawn = cx.clone();
-                        cx.spawn(async move {
-                            let cx = cx_spawn;
-                            let session_id = req.session_id.clone();
-                            let mode_id = req.mode_id.clone();
-                            match agent.on_set_mode(&session_id.0, &mode_id.0).await {
-                                Ok(resp) => {
-                                    // Notify before responding so clients see the mode update before block_task unblocks.
-                                    cx.send_notification(SessionNotification::new(
-                                        session_id,
-                                        SessionUpdate::CurrentModeUpdate(
-                                            CurrentModeUpdate::new(mode_id),
-                                        ),
-                                    ))?;
-                                    responder.respond(resp)?;
-                                }
-                                Err(e) => {
-                                    responder.respond_with_error(e)?;
-                                }
-                            }
-                            Ok(())
-                        })?;
-                        Ok(())
-                    }
-                })
-                .await
-                .if_request({
-                    let agent = agent.clone();
-                    let cx = cx.clone();
-                    |req: SetSessionModelRequest, responder: Responder<SetSessionModelResponse>| async move {
-                        let cx_spawn = cx.clone();
-                        cx.spawn(async move {
-                            let cx = cx_spawn;
-                            let session_id = req.session_id.clone();
-                            match agent.on_set_model(&session_id.0, &req.model_id.0).await {
-                                Ok(resp) => {
-                                    let (notification, _) = agent.build_config_update(&session_id).await?;
-                                    cx.send_notification(notification)?;
-                                    responder.respond(resp)?;
-                                }
-                                Err(e) => responder.respond_with_error(e)?,
-                            }
-                            Ok(())
-                        })?;
-                        Ok(())
-                    }
-                })
-                .await
-                .if_request({
-                    let agent = agent.clone();
-                    let cx = cx.clone();
-                    |req: ListSessionsRequest, responder: Responder<ListSessionsResponse>| async move {
-                        cx.spawn(async move {
-                            match agent.on_list_sessions(req).await {
-                                Ok(response) => responder.respond(response)?,
-                                Err(e) => responder.respond_with_error(e)?,
-                            }
-                            Ok(())
-                        })?;
-                        Ok(())
-                    }
-                })
-                .await
-                .if_request({
-                    let agent = agent.clone();
-                    let cx = cx.clone();
-                    |req: CloseSessionRequest, responder: Responder<CloseSessionResponse>| async move {
-                        cx.spawn(async move {
-                            responder.respond(agent.on_close_session(&req.session_id.0).await?)?;
-                            Ok(())
-                        })?;
-                        Ok(())
-                    }
-                })
-                .await
-                .if_request({
-                    let agent = agent.clone();
-                    let cx = cx.clone();
-                    |req: ForkSessionRequest, responder: Responder<ForkSessionResponse>| async move {
-                        let cx_spawn = cx.clone();
-                        cx.spawn(async move {
-                            responder.respond_with_result(agent.on_fork_session(&cx_spawn, req).await)?;
                             Ok(())
                         })?;
                         Ok(())

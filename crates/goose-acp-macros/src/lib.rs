@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, FnArg, GenericArgument, ImplItem, ItemImpl, Pat, PathArguments, ReturnType,
-    Type,
+    parse::{Parse, ParseStream},
+    parse_macro_input, FnArg, GenericArgument, Ident, ImplItem, ItemImpl, LitBool, LitStr, Pat,
+    PathArguments, ReturnType, Token, Type,
 };
 
 /// Marks an impl block as containing `#[custom_method(RequestType)]`-annotated handlers.
@@ -58,8 +59,8 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
             method.attrs.retain(|attr| {
                 if attr.path().is_ident("custom_method") {
                     if let Ok(meta_list) = attr.meta.require_list() {
-                        if let Ok(ty) = meta_list.parse_args::<Type>() {
-                            request_type = Some(ty);
+                        if let Ok(args) = meta_list.parse_args::<CustomMethodArgs>() {
+                            request_type = Some(args);
                         }
                     }
                     false // strip the attribute
@@ -76,8 +77,10 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 let ok_type = extract_result_ok_type(&method.sig);
 
                 routes.push(Route {
-                    request_type: req_type,
+                    request_type: req_type.request_type,
                     fn_ident,
+                    method: req_type.method,
+                    include_schema: req_type.include_schema,
                     param_type,
                     return_type,
                     ok_type,
@@ -91,12 +94,16 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .map(|route| {
             let req_type = &route.request_type;
+            let method_match = match &route.method {
+                Some(method) => quote! { method == #method },
+                None => quote! { <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) },
+            };
             let fn_ident = &route.fn_ident;
 
             match &route.param_type {
                 Some(_) => {
                     quote! {
-                        if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
+                        if #method_match {
                             let req = serde_json::from_value(params)
                                 .map_err(|e| agent_client_protocol::Error::invalid_params().data(e.to_string()))?;
                             let result = self.#fn_ident(cx, req).await?;
@@ -107,7 +114,7 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 None => {
                     quote! {
-                        if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
+                        if #method_match {
                             let result = self.#fn_ident(cx).await?;
                             return serde_json::to_value(&result)
                                 .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()));
@@ -121,6 +128,7 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Generate schema entries for each route using SchemaGenerator for $ref dedup.
     let schema_entries: Vec<_> = routes
         .iter()
+        .filter(|route| route.include_schema)
         .map(|route| {
             let req_type = &route.request_type;
 
@@ -172,16 +180,18 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 quote! { None }
             };
 
+            let method_expr = match &route.method {
+                Some(method) => quote! { #method },
+                None => quote! { agent_client_protocol::JsonRpcMessage::method(&<#req_type as Default>::default()) },
+            };
+
             quote! {
-                {
-                    let dummy = <#req_type as Default>::default();
-                    crate::custom_requests::CustomMethodSchema {
-                        method: agent_client_protocol::JsonRpcMessage::method(&dummy).to_string(),
-                        params_schema: #params_expr,
-                        params_type_name: #params_name_expr,
-                        response_schema: #response_expr,
-                        response_type_name: #response_name_expr,
-                    }
+                crate::custom_requests::CustomMethodSchema {
+                    method: #method_expr.to_string(),
+                    params_schema: #params_expr,
+                    params_type_name: #params_name_expr,
+                    response_schema: #response_expr,
+                    response_type_name: #response_name_expr,
                 }
             }
         })
@@ -223,10 +233,52 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
 struct Route {
     request_type: Type,
     fn_ident: syn::Ident,
+    method: Option<String>,
+    include_schema: bool,
     param_type: Option<Type>,
     #[allow(dead_code)]
     return_type: Option<Type>,
     ok_type: Option<Type>,
+}
+
+struct CustomMethodArgs {
+    request_type: Type,
+    method: Option<String>,
+    include_schema: bool,
+}
+
+impl Parse for CustomMethodArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let request_type = input.parse()?;
+        let mut method = None;
+        let mut include_schema = true;
+
+        while input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
+            let name: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            match name.to_string().as_str() {
+                "method" => method = Some(input.parse::<LitStr>()?.value()),
+                "include_schema" => include_schema = input.parse::<LitBool>()?.value,
+                other => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!("unsupported custom_method argument `{other}`"),
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            request_type,
+            method,
+            include_schema,
+        })
+    }
 }
 
 /// Extract the request parameter after `&self` and connection, if any.
