@@ -53,19 +53,9 @@ impl AnthropicFormatOptions {
     fn for_model(self, model_config: &ModelConfig) -> Self {
         let preserve_thinking_context = model_config
             .request_param::<bool>("preserve_thinking_context")
-            .or_else(|| {
-                crate::config::Config::global()
-                    .get_param("ANTHROPIC_PRESERVE_THINKING_CONTEXT")
-                    .ok()
-            })
             .unwrap_or(self.preserve_thinking_context);
         let preserve_unsigned_thinking = model_config
             .request_param::<bool>("preserve_unsigned_thinking")
-            .or_else(|| {
-                crate::config::Config::global()
-                    .get_param("ANTHROPIC_PRESERVE_UNSIGNED_THINKING")
-                    .ok()
-            })
             .unwrap_or(self.preserve_unsigned_thinking)
             || preserve_thinking_context;
 
