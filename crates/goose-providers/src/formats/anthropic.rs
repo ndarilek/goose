@@ -101,7 +101,7 @@ pub fn thinking_type_for_provider(provider_name: &str, model_config: &ModelConfi
 
     let effort = model_config.thinking_effort();
 
-    if effort.is_none() && legacy_thinking_budget_tokens().is_some() {
+    if effort.is_none() && model_config.request_param::<i32>("budget_tokens").is_some() {
         return match mode {
             Some(ThinkingMode::Adaptive) => ThinkingType::Adaptive,
             _ => ThinkingType::Enabled,
@@ -529,10 +529,6 @@ pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
         return request_param.max(1024);
     }
 
-    if let Some(budget) = legacy_thinking_budget_tokens() {
-        return budget;
-    }
-
     let effort = model_config
         .thinking_effort()
         .unwrap_or(ThinkingEffort::High);
@@ -543,16 +539,6 @@ pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
         ThinkingEffort::High => 16000,
         ThinkingEffort::Max => 32000,
     }
-}
-
-fn legacy_thinking_budget_tokens() -> Option<i32> {
-    let config = crate::config::Config::global();
-    for key in ["ANTHROPIC_THINKING_BUDGET", "CLAUDE_THINKING_BUDGET"] {
-        if let Ok(budget) = config.get_param::<i32>(key) {
-            return Some(budget.max(1024));
-        }
-    }
-    None
 }
 
 // Anthropic counts thinking tokens against max_tokens, so the budget must leave
@@ -1336,10 +1322,7 @@ mod tests {
     #[test]
     fn test_create_request_preserves_thinking_context_for_compatible_models() -> Result<()> {
         let _guard = env_lock::lock_env([
-            ("CLAUDE_THINKING_TYPE", None::<&str>),
             ("CLAUDE_THINKING_ENABLED", None::<&str>),
-            ("ANTHROPIC_THINKING_BUDGET", None::<&str>),
-            ("CLAUDE_THINKING_BUDGET", None::<&str>),
             ("ANTHROPIC_PRESERVE_THINKING_CONTEXT", None::<&str>),
             ("ANTHROPIC_PRESERVE_UNSIGNED_THINKING", None::<&str>),
         ]);
@@ -1378,10 +1361,7 @@ mod tests {
     #[test]
     fn test_create_request_model_params_enable_preserved_thinking_context() -> Result<()> {
         let _guard = env_lock::lock_env([
-            ("CLAUDE_THINKING_TYPE", None::<&str>),
             ("CLAUDE_THINKING_ENABLED", None::<&str>),
-            ("ANTHROPIC_THINKING_BUDGET", None::<&str>),
-            ("CLAUDE_THINKING_BUDGET", None::<&str>),
             ("ANTHROPIC_PRESERVE_THINKING_CONTEXT", None::<&str>),
             ("ANTHROPIC_PRESERVE_UNSIGNED_THINKING", None::<&str>),
         ]);
@@ -1660,17 +1640,6 @@ mod tests {
         assert_eq!(payload["output_config"]["effort"], "high");
 
         Ok(())
-    }
-
-    #[test]
-    fn test_thinking_budget_uses_legacy_env() {
-        let _guard = env_lock::lock_env([
-            ("GOOSE_THINKING_EFFORT", None::<&str>),
-            ("ANTHROPIC_THINKING_BUDGET", Some("8192")),
-            ("CLAUDE_THINKING_BUDGET", None::<&str>),
-        ]);
-        let config = cfg_with_effort("claude-3-7-sonnet-20250219", "high");
-        assert_eq!(thinking_budget_tokens(&config), 8192);
     }
 
     #[test]

@@ -29,7 +29,8 @@ pub fn model_config_from_user_config_with_session_settings(
     let model = materialize_model_config_inner(model, false)?
         .with_context_limit(context_limit)
         .with_inherited_session_settings_from(previous, request_params)
-        .with_default_thinking_effort(config.get_goose_thinking_effort());
+        .with_default_thinking_effort(config.get_goose_thinking_effort())
+        .with_default_thinking_budget(config.get_legacy_thinking_budget());
 
     Ok(model.with_canonical_limits(provider_name))
 }
@@ -60,6 +61,8 @@ fn materialize_model_config_inner(
     if include_default_thinking_effort {
         model = model.with_default_thinking_effort(config.get_goose_thinking_effort());
     }
+
+    model = model.with_default_thinking_budget(config.get_legacy_thinking_budget());
 
     Ok(model)
 }

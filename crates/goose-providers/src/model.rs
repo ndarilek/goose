@@ -182,6 +182,23 @@ impl ModelConfig {
         self
     }
 
+    pub fn with_default_thinking_budget(mut self, budget: Option<i32>) -> Self {
+        let has_budget = self.request_param::<i32>("budget_tokens").is_some();
+        if !has_budget {
+            if let Some(budget) = budget {
+                let params = self.request_params.get_or_insert_with(HashMap::new);
+                params.insert("budget_tokens".to_string(), serde_json::json!(budget));
+            }
+        }
+
+        if let Some(fast_config) = self.fast_model_config.take() {
+            self.fast_model_config =
+                Some(Box::new(fast_config.with_default_thinking_budget(budget)));
+        }
+
+        self
+    }
+
     pub fn with_inherited_session_settings_from(
         mut self,
         previous: Option<&ModelConfig>,
