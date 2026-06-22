@@ -14,8 +14,7 @@ use tokio_util::io::StreamReader;
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef, ProviderMetadata};
 use super::formats::anthropic::{
-    create_request_with_options_for_provider, response_to_streaming_message,
-    AnthropicFormatOptions, ANTHROPIC_PROVIDER_NAME,
+    create_request, response_to_streaming_message, AnthropicFormatOptions, ANTHROPIC_PROVIDER_NAME,
 };
 use super::openai_compatible::handle_status;
 use super::openai_compatible::map_http_error_to_provider_error;
@@ -290,7 +289,7 @@ impl Provider for AnthropicProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = create_request_with_options_for_provider(
+        let mut payload = create_request(
             ANTHROPIC_PROVIDER_NAME,
             model_config,
             system,

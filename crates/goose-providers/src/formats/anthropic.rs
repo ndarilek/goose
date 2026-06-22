@@ -16,7 +16,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
-pub(crate) const ANTHROPIC_PROVIDER_NAME: &str = "anthropic";
+pub const ANTHROPIC_PROVIDER_NAME: &str = "anthropic";
 
 macro_rules! string_enum {
     ($name:ident { $($variant:ident => $str:literal),+ $(,)? }) => {
@@ -611,40 +611,7 @@ fn apply_thinking_config(
     }
 }
 
-/// Create a complete request payload for Anthropic's API
 pub fn create_request(
-    model_config: &ModelConfig,
-    system: &str,
-    messages: &[Message],
-    tools: &[Tool],
-) -> Result<Value> {
-    create_request_with_options(
-        model_config,
-        system,
-        messages,
-        tools,
-        AnthropicFormatOptions::default(),
-    )
-}
-
-pub fn create_request_with_options(
-    model_config: &ModelConfig,
-    system: &str,
-    messages: &[Message],
-    tools: &[Tool],
-    options: AnthropicFormatOptions,
-) -> Result<Value> {
-    create_request_with_options_for_provider(
-        ANTHROPIC_PROVIDER_NAME,
-        model_config,
-        system,
-        messages,
-        tools,
-        options,
-    )
-}
-
-pub fn create_request_with_options_for_provider(
     provider_name: &str,
     model_config: &ModelConfig,
     system: &str,
@@ -980,9 +947,42 @@ where
 mod tests {
     use super::*;
     use crate::conversation::message::Message;
-    use goose_providers::model::ModelConfig;
+    use crate::model::ModelConfig;
     use rmcp::object;
     use serde_json::json;
+
+    /// Create a complete request payload for Anthropic's API
+    fn create_request_with_default_options(
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<Value> {
+        create_request_with_options_provider(
+            model_config,
+            system,
+            messages,
+            tools,
+            AnthropicFormatOptions::default(),
+        )
+    }
+
+    fn create_request_with_options_provider(
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+        options: AnthropicFormatOptions,
+    ) -> Result<Value> {
+        create_request(
+            ANTHROPIC_PROVIDER_NAME,
+            model_config,
+            system,
+            messages,
+            tools,
+            options,
+        )
+    }
 
     #[test]
     fn test_parse_text_response() -> Result<()> {
@@ -1258,7 +1258,7 @@ mod tests {
         config.max_tokens = Some(4096);
         config.request_params = Some(params);
         let messages = vec![Message::user().with_text("Hello")];
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
 
         assert_eq!(payload["thinking"]["type"], "adaptive");
         assert_eq!(payload["output_config"]["effort"], "high");
@@ -1278,7 +1278,7 @@ mod tests {
         config.max_tokens = Some(64000);
 
         let messages = vec![Message::user().with_text("Hello")];
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
 
         assert_eq!(payload["thinking"]["type"], "enabled");
         let budget = payload["thinking"]["budget_tokens"].as_i64().unwrap();
@@ -1301,7 +1301,7 @@ mod tests {
 
         // Budget larger than max_tokens is clamped to leave room for a response.
         config.max_tokens = Some(4096);
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
         let budget = payload["thinking"]["budget_tokens"].as_i64().unwrap();
         assert!(budget >= 1024);
         assert!(budget <= 4096 - 1024);
@@ -1309,7 +1309,7 @@ mod tests {
 
         // Too small to fit any thinking alongside a response — drop it.
         config.max_tokens = Some(1500);
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
         assert!(payload.get("thinking").is_none());
         assert_eq!(payload["max_tokens"], 1500);
 
@@ -1325,7 +1325,7 @@ mod tests {
 
         let config = cfg_with_effort("claude-sonnet-4-20250514", "off");
         let messages = vec![Message::user().with_text("Hello")];
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
 
         assert!(payload.get("thinking").is_none());
         assert!(payload.get("output_config").is_none());
@@ -1351,7 +1351,7 @@ mod tests {
             Message::user().with_text("Continue"),
         ];
 
-        let payload = create_request_with_options(
+        let payload = create_request_with_options_provider(
             &config,
             "system",
             &messages,
@@ -1397,7 +1397,7 @@ mod tests {
             Message::user().with_text("Continue"),
         ];
 
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
 
         assert_eq!(payload["thinking"]["clear_thinking"], false);
         assert_eq!(payload["messages"][0]["content"][0]["type"], "thinking");
@@ -1653,7 +1653,7 @@ mod tests {
         config.temperature = Some(0.7);
         let messages = vec![Message::user().with_text("Hello")];
 
-        let payload = create_request(&config, "system", &messages, &[])?;
+        let payload = create_request_with_default_options(&config, "system", &messages, &[])?;
 
         assert_eq!(payload["thinking"]["type"], "adaptive");
         assert!(payload.get("temperature").is_none());
