@@ -191,14 +191,12 @@ impl GooseAcpAgent {
 
         let replay_tool_requests = replay_conversation_to_client(cx, &session)?;
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, &session).await?;
-        let should_emit_start = self
-            .register_acp_session(session_id_str.clone(), agent.clone(), replay_tool_requests)
-            .await;
-        if should_emit_start {
-            agent
-                .emit_hook(crate::hooks::HookEvent::SessionStart, &session_id_str)
-                .await;
-        }
+        self.register_active_session_and_emit_start_hook(
+            session_id_str.clone(),
+            agent.clone(),
+            replay_tool_requests,
+        )
+        .await;
 
         session = self
             .session_manager

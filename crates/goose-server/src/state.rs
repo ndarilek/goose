@@ -209,3 +209,116 @@ impl AppState {
         })
     }
 }
+
+#[cfg(test)]
+impl AppState {
+    async fn with_agent_manager_for_test(
+        agent_manager: Arc<AgentManager>,
+    ) -> anyhow::Result<Arc<AppState>> {
+        Ok(Arc::new(Self {
+            agent_manager: agent_manager.clone(),
+            recipe_file_hash_map: Arc::new(Mutex::new(HashMap::new())),
+            recipe_session_tracker: Arc::new(Mutex::new(HashSet::new())),
+            tunnel_manager: Arc::new(TunnelManager::new(false)),
+            gateway_manager: Arc::new(GatewayManager::new(agent_manager)?),
+            extension_loading_tasks: Arc::new(Mutex::new(HashMap::new())),
+            lifecycle_started_sessions: Arc::new(Mutex::new(HashSet::new())),
+            #[cfg(feature = "local-inference")]
+            inference_runtime: Arc::new(OnceLock::new()),
+            session_buses: Arc::new(Mutex::new(HashMap::new())),
+        }))
+    }
+
+    async fn has_lifecycle_started_session_for_test(&self, session_id: &str) -> bool {
+        self.lifecycle_started_sessions
+            .lock()
+            .await
+            .contains(session_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goose::agents::{AgentConfig, GoosePlatform};
+    use goose::config::permission::PermissionManager;
+    use goose::config::GooseMode;
+    use std::path::{Path, PathBuf};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("goose-server-state-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    async fn test_agent_manager(root: &Path) -> Arc<AgentManager> {
+        let session_manager = Arc::new(SessionManager::new(root.join("sessions")));
+        let permission_manager = Arc::new(PermissionManager::new(root.join("config")));
+        let agent_config = AgentConfig::new(
+            session_manager,
+            permission_manager,
+            None,
+            GooseMode::default(),
+            true,
+            GoosePlatform::GooseDesktop,
+        );
+        Arc::new(AgentManager::new(agent_config, Some(10)).await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn session_start_tracking_is_idempotent_until_session_end() {
+        let temp_dir = TestDir::new();
+        let state =
+            AppState::with_agent_manager_for_test(test_agent_manager(temp_dir.path()).await)
+                .await
+                .unwrap();
+        let session_id = "session-lifecycle-test";
+
+        let first = state
+            .get_agent_with_session_start_hook(session_id.to_string())
+            .await
+            .unwrap();
+        let second = state
+            .get_agent_with_session_start_hook(session_id.to_string())
+            .await
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(
+            state
+                .has_lifecycle_started_session_for_test(session_id)
+                .await
+        );
+
+        state.emit_session_end_hook(session_id).await;
+        assert!(
+            !state
+                .has_lifecycle_started_session_for_test(session_id)
+                .await
+        );
+
+        state.emit_session_end_hook(session_id).await;
+        assert!(
+            !state
+                .has_lifecycle_started_session_for_test(session_id)
+                .await
+        );
+    }
+}
