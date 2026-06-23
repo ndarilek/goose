@@ -3003,43 +3003,57 @@ mod tests {
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
     use std::io::Write;
     use std::path::PathBuf;
+    use std::time::Duration;
     use tempfile::{NamedTempFile, TempDir};
     use test_case::test_case;
 
     struct AcpLifecycleHookTestEnv {
         _temp_dir: TempDir,
-        acp: GooseAcpAgent,
+        acp: Arc<GooseAcpAgent>,
         agent: Arc<Agent>,
         hook_log: PathBuf,
+        plugin_root: PathBuf,
+        session_manager: Arc<SessionManager>,
     }
 
     impl AcpLifecycleHookTestEnv {
         async fn new() -> Self {
+            Self::new_with_session_end_command("sh -c 'echo end >> \"$PLUGIN_ROOT/lifecycle.log\"'")
+                .await
+        }
+
+        async fn new_with_session_end_command(session_end_command: &str) -> Self {
             let temp_dir = tempfile::tempdir().unwrap();
             let plugin_root = temp_dir.path().join("lifecycle-hooks");
             let hook_log = plugin_root.join("lifecycle.log");
             std::fs::create_dir_all(plugin_root.join("hooks")).unwrap();
+            let hooks = serde_json::json!({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "sh -c 'echo start >> \"$PLUGIN_ROOT/lifecycle.log\"'"
+                                }
+                            ]
+                        }
+                    ],
+                    "SessionEnd": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": session_end_command
+                                }
+                            ]
+                        }
+                    ]
+                }
+            });
             std::fs::write(
                 plugin_root.join("hooks").join("hooks.json"),
-                r#"{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "sh -c 'echo start >> \"$PLUGIN_ROOT/lifecycle.log\"'" }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          { "type": "command", "command": "sh -c 'echo end >> \"$PLUGIN_ROOT/lifecycle.log\"'" }
-        ]
-      }
-    ]
-  }
-}
-"#,
+                serde_json::to_string_pretty(&hooks).unwrap(),
             )
             .unwrap();
 
@@ -3057,7 +3071,7 @@ mod tests {
             let hook_manager =
                 crate::hooks::HookManager::from_plugins_for_test(vec![DiscoveredPlugin {
                     name: "lifecycle-hooks".into(),
-                    root: plugin_root,
+                    root: plugin_root.clone(),
                     scope: PluginScope::Project,
                 }]);
             let mut agent = Agent::with_config(agent_config.clone());
@@ -3067,7 +3081,7 @@ mod tests {
             let agent_manager = Arc::new(AgentManager::new(agent_config, None).await.unwrap());
             let provider_factory: AcpProviderFactory =
                 Arc::new(|_, _, _, _| Box::pin(async { Err(anyhow::anyhow!("unused")) }));
-            let acp = GooseAcpAgent {
+            let acp = Arc::new(GooseAcpAgent {
                 sessions: Arc::new(Mutex::new(HashMap::new())),
                 active_prompt_runs: Arc::new(Mutex::new(HashMap::new())),
                 closed_session_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -3091,13 +3105,15 @@ mod tests {
                 ),
                 additional_source_roots: Vec::new(),
                 recipe_path_cache: Arc::new(Mutex::new(HashMap::new())),
-            };
+            });
 
             Self {
                 _temp_dir: temp_dir,
                 acp,
                 agent,
                 hook_log,
+                plugin_root,
+                session_manager,
             }
         }
 
@@ -3107,6 +3123,19 @@ mod tests {
                 .lines()
                 .map(ToString::to_string)
                 .collect()
+        }
+
+        async fn wait_for_hook_log_line(&self, expected: &str) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if self.hook_log_lines().iter().any(|line| line == expected) {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
         }
     }
 
@@ -3138,6 +3167,66 @@ mod tests {
         env.acp.on_close_session(&session_id).await.unwrap();
 
         assert_eq!(env.hook_log_lines(), vec!["start", "end"]);
+    }
+
+    #[tokio::test]
+    async fn acp_delete_session_emits_end_hook_before_storage_delete() {
+        let env = AcpLifecycleHookTestEnv::new_with_session_end_command(
+            "sh -c 'echo end-start >> \"$PLUGIN_ROOT/lifecycle.log\"; while [ ! -f \"$PLUGIN_ROOT/continue-end\" ]; do sleep 0.05; done; echo end-finish >> \"$PLUGIN_ROOT/lifecycle.log\"'",
+        )
+        .await;
+        let session = env
+            .session_manager
+            .create_session(
+                env.plugin_root.clone(),
+                "Delete lifecycle test".to_string(),
+                SessionType::User,
+                GooseMode::Auto,
+            )
+            .await
+            .unwrap();
+        let session_id = session.id.clone();
+
+        assert!(
+            env.acp
+                .register_active_session_and_emit_start_hook(
+                    session_id.clone(),
+                    env.agent.clone(),
+                    HashMap::new(),
+                )
+                .await
+        );
+
+        let delete_task = {
+            let acp = env.acp.clone();
+            let session_id = session_id.clone();
+            tokio::spawn(async move {
+                acp.dispatch_custom_request(
+                    "session/delete",
+                    serde_json::json!({ "sessionId": session_id }),
+                )
+                .await
+            })
+        };
+
+        env.wait_for_hook_log_line("end-start").await;
+        env.session_manager
+            .get_session(&session_id, false)
+            .await
+            .unwrap();
+
+        std::fs::write(env.plugin_root.join("continue-end"), "").unwrap();
+        delete_task.await.unwrap().unwrap();
+
+        assert!(env
+            .session_manager
+            .get_session(&session_id, false)
+            .await
+            .is_err());
+        assert_eq!(
+            env.hook_log_lines(),
+            vec!["start", "end-start", "end-finish"]
+        );
     }
 
     #[test_case(

@@ -100,11 +100,15 @@ impl GooseAcpAgent {
         req: DeleteSessionRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
         self.session_manager
-            .delete_session(&req.session_id)
+            .get_session(&req.session_id, false)
             .await
             .internal_err()?;
         self.remove_active_session_and_emit_end_hook(&req.session_id)
             .await;
+        self.session_manager
+            .delete_session(&req.session_id)
+            .await
+            .internal_err()?;
         let _ = self.agent_manager.remove_session(&req.session_id).await;
         Ok(EmptyResponse {})
     }
