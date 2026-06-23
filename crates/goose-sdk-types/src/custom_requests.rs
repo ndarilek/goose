@@ -4,6 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod recipe;
+pub use recipe::*;
+
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.
 ///
@@ -26,18 +29,16 @@ pub struct CustomMethodSchema {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/session/extensions/add", response = EmptyResponse)]
 #[serde(rename_all = "camelCase")]
-pub struct AddExtensionRequest {
+pub struct AddSessionExtensionRequest {
     pub session_id: String,
-    /// Extension configuration (see ExtensionConfig variants: Stdio, StreamableHttp, Builtin, Platform).
-    #[serde(default)]
-    pub config: serde_json::Value,
+    pub extension: GooseExtension,
 }
 
 /// Remove an extension from an active session.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/session/extensions/remove", response = EmptyResponse)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoveExtensionRequest {
+pub struct RemoveSessionExtensionRequest {
     pub session_id: String,
     pub name: String,
 }
@@ -303,7 +304,7 @@ pub struct GetSessionExtensionsRequest {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 pub struct GetSessionExtensionsResponse {
-    pub extensions: Vec<serde_json::Value>,
+    pub extensions: Vec<GooseExtension>,
 }
 
 /// Read allowlisted user preferences. Empty `keys` means all supported preferences.
@@ -491,6 +492,18 @@ pub struct GetSessionInfoResponse {
     pub session: SessionInfo,
 }
 
+/// Truncate a session conversation from the given message timestamp onward.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/session/conversation/truncate",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct TruncateSessionConversationRequest {
+    pub session_id: String,
+    pub truncate_from: i64,
+}
+
 /// Update the project association for a session.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/session/project/update", response = EmptyResponse)]
@@ -554,17 +567,6 @@ pub struct ImportSessionResponse {
     pub title: Option<String>,
     pub updated_at: Option<String>,
     pub message_count: u64,
-}
-
-/// Submit a response for a pending MCP elicitation in an active session.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
-#[request(method = "_goose/unstable/elicitation/respond", response = EmptyResponse)]
-#[serde(rename_all = "camelCase")]
-pub struct ElicitationRespondRequest {
-    pub session_id: String,
-    pub elicitation_id: String,
-    #[serde(default)]
-    pub user_data: serde_json::Value,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
