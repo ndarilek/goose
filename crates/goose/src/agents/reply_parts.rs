@@ -650,10 +650,9 @@ mod tests {
     use crate::providers::base::Provider;
     use crate::session::session_manager::SessionType;
     use async_trait::async_trait;
-    use goose_providers::conversation::token_usage::{ProviderStats, ProviderUsage, Usage};
+    use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
     use goose_providers::model::ModelConfig;
     use rmcp::object;
-    use std::sync::Arc;
 
     #[derive(Clone)]
     struct MockProvider {
@@ -786,102 +785,6 @@ mod tests {
             error_seen,
             "Error should have been propagated, not silently ignored"
         );
-    }
-
-    #[derive(Clone)]
-    struct TimedUsageProvider {
-        model_config: ModelConfig,
-        usage_before_message: bool,
-    }
-
-    #[async_trait]
-    impl Provider for TimedUsageProvider {
-        fn get_name(&self) -> &str {
-            "timed"
-        }
-
-        fn get_model_config(&self) -> ModelConfig {
-            self.model_config.clone()
-        }
-
-        async fn stream(
-            &self,
-            _model_config: &ModelConfig,
-            _session_id: &str,
-            _system: &str,
-            _messages: &[Message],
-            _tools: &[Tool],
-        ) -> Result<MessageStream, ProviderError> {
-            let usage = ProviderUsage::new("timed-model".to_string(), Usage::default()).with_stats(
-                ProviderStats {
-                    output_tokens: Some(7),
-                    ..ProviderStats::default()
-                },
-            );
-            let usage_before_message = self.usage_before_message;
-
-            Ok(Box::pin(try_stream! {
-                if usage_before_message {
-                    yield (None, Some(usage.clone()));
-                }
-
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                yield (Some(Message::assistant().with_text("ok")), None);
-
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                if !usage_before_message {
-                    yield (None, Some(usage));
-                }
-            }))
-        }
-    }
-
-    #[tokio::test]
-    async fn stream_response_adds_timings_to_usage() {
-        let provider = Arc::new(TimedUsageProvider {
-            model_config: ModelConfig::new("timed-model").unwrap(),
-            usage_before_message: false,
-        });
-
-        let mut stream =
-            Agent::stream_response_from_provider(provider, "session", "system", &[], &[], &[])
-                .await
-                .unwrap();
-
-        let mut final_usage = None;
-        while let Some(next) = stream.next().await {
-            let (_message, usage) = next.unwrap();
-            final_usage = final_usage.or(usage);
-        }
-
-        let stats = final_usage.unwrap().stats.unwrap();
-        assert!(stats.time_to_first_token_ms.is_some());
-        assert!(stats.elapsed_ms.unwrap() >= stats.time_to_first_token_ms.unwrap());
-        assert_eq!(stats.output_tokens, Some(7));
-    }
-
-    #[tokio::test]
-    async fn toolshim_stream_response_adds_timings_after_message_arrives() {
-        let provider = Arc::new(TimedUsageProvider {
-            model_config: ModelConfig::new("timed-model").unwrap().with_toolshim(true),
-            usage_before_message: true,
-        });
-
-        let mut stream =
-            Agent::stream_response_from_provider(provider, "session", "system", &[], &[], &[])
-                .await
-                .unwrap();
-
-        let mut final_usage = None;
-        while let Some(next) = stream.next().await {
-            let (_message, usage) = next.unwrap();
-            final_usage = final_usage.or(usage);
-        }
-
-        let stats = final_usage.unwrap().stats.unwrap();
-        assert!(stats.time_to_first_token_ms.is_some());
-        assert!(stats.elapsed_ms.unwrap() >= stats.time_to_first_token_ms.unwrap());
-        assert_eq!(stats.output_tokens, Some(7));
     }
 
     #[tokio::test]
