@@ -26,8 +26,8 @@ use goose_providers::conversation::token_usage::{ProviderStats, ProviderUsage, U
 use rmcp::model::Tool;
 use tracing::warn;
 
-fn duration_millis(duration: Duration) -> u64 {
-    duration.as_millis().min(u128::from(u64::MAX)) as u64
+fn duration_millis_saturating(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn usage_with_timings(
@@ -36,12 +36,14 @@ fn usage_with_timings(
     first_token_at: Option<Instant>,
 ) -> ProviderUsage {
     let stats = usage.stats.get_or_insert_with(ProviderStats::default);
-    stats.time_to_first_token_ms = stats
-        .time_to_first_token_ms
-        .or_else(|| first_token_at.map(|time| duration_millis(time.duration_since(started_at))));
-    stats.elapsed_ms = stats
+    if let Some(time) = first_token_at {
+        stats
+            .time_to_first_token_ms
+            .get_or_insert_with(|| duration_millis_saturating(time.duration_since(started_at)));
+    }
+    stats
         .elapsed_ms
-        .or_else(|| Some(duration_millis(started_at.elapsed())));
+        .get_or_insert_with(|| duration_millis_saturating(started_at.elapsed()));
     usage
 }
 
