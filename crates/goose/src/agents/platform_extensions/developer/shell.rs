@@ -388,7 +388,7 @@ impl ShellTool {
             params.timeout_secs,
             working_dir,
             login_path_ref,
-            &env_overlay,
+            env_overlay,
             self.output_dir.path(),
             cancellation_token,
         )
@@ -903,29 +903,21 @@ fn build_shell_command(
     #[cfg(not(windows))]
     let (mut command, env_capture) = {
         let shell = unix_shell();
-        let env_capture = if unix_shell_flavor(&shell) == UnixShellFlavor::Posix {
+        let flatpak = is_flatpak();
+        // Under Flatpak the wrapper script lives in the sandbox-private temp dir,
+        // which `flatpak-spawn --host` cannot read, so env capture is skipped there.
+        let env_capture = if !flatpak && unix_shell_flavor(&shell) == UnixShellFlavor::Posix {
             Some(EnvCapture::new(command_line, output_dir)?)
         } else {
             None
         };
 
-        if is_flatpak() {
+        if flatpak {
             let mut command = flatpak_spawn_command();
             command.arg(format!("--directory={}", working_dir.display()));
             apply_flatpak_env(&mut command, login_path, env_overlay);
-            if let Some(env_capture) = &env_capture {
-                command.arg(format!(
-                    "--env={}={}",
-                    ENV_CAPTURE_PATH_VAR,
-                    env_capture.after_path().display()
-                ));
-            }
             command.arg(&shell);
-            if let Some(env_capture) = &env_capture {
-                command.arg(env_capture.script_path());
-            } else {
-                command.args(unix_shell_command_args(command_line));
-            }
+            command.args(unix_shell_command_args(command_line));
             (command, env_capture)
         } else {
             let mut command = tokio::process::Command::new(shell);
@@ -1368,6 +1360,57 @@ mod tests {
         slots.sort();
         let expected: Vec<usize> = (0..OUTPUT_SLOTS).collect();
         assert_eq!(slots, expected);
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_cancellation_kills_child_process_tree() {
+        let tool = ShellTool::new_for_test().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let sentinel = dir.path().join("ticks");
+        let command = format!(
+            "( while true; do echo tick >> {sentinel:?}; sleep 0.1; done ) & wait",
+            sentinel = sentinel.display()
+        );
+
+        let cancel_token = CancellationToken::new();
+        let handle = {
+            let cancel_token = cancel_token.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                cancel_token.cancel();
+            })
+        };
+
+        let execution = tool
+            .shell(
+                ShellParams {
+                    command,
+                    timeout_secs: None,
+                },
+                dir.path(),
+                &EnvOverlay::new(),
+                cancel_token,
+            )
+            .await;
+        handle.await.unwrap();
+
+        assert!(
+            extract_shell_output(&execution.result).cancelled,
+            "expected the execution to be reported as cancelled"
+        );
+        assert!(
+            extract_text(&execution.result).contains("Command cancelled"),
+            "expected cancellation notice in rendered output"
+        );
+
+        let ticks_after_cancel = std::fs::read_to_string(&sentinel).unwrap().lines().count();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let ticks_later = std::fs::read_to_string(&sentinel).unwrap().lines().count();
+        assert_eq!(
+            ticks_after_cancel, ticks_later,
+            "background child kept writing after cancellation, process group was not killed"
+        );
     }
 
     #[cfg(not(windows))]

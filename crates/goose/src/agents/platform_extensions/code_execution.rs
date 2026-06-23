@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -144,6 +145,7 @@ impl CodeExecutionClient {
     fn build_callback_registry(
         &self,
         session_id: &str,
+        working_dir: Option<PathBuf>,
         code_mode: &CodeMode,
     ) -> Result<PctxRegistry, String> {
         let manager = self
@@ -163,7 +165,12 @@ impl CodeExecutionClient {
                     .unwrap_or_default(),
                 &cfg.name
             );
-            let callback = create_tool_callback(session_id.to_string(), full_name, manager.clone());
+            let callback = create_tool_callback(
+                session_id.to_string(),
+                working_dir.clone(),
+                full_name,
+                manager.clone(),
+            );
             registry
                 .add_callback(&cfg.id(), callback)
                 .map_err(|e| format!("Failed to register callback: {e}"))?;
@@ -237,6 +244,7 @@ impl CodeExecutionClient {
     async fn handle_execute_typescript(
         &self,
         session_id: &str,
+        working_dir: Option<PathBuf>,
         arguments: Option<JsonObject>,
     ) -> Result<Vec<Content>, String> {
         let args: ExecuteWithToolGraph = arguments
@@ -246,7 +254,7 @@ impl CodeExecutionClient {
             .ok_or("Missing arguments for execute_typescript")?;
 
         let code_mode = self.get_code_mode(session_id).await?;
-        let registry = self.build_callback_registry(session_id, &code_mode)?;
+        let registry = self.build_callback_registry(session_id, working_dir, &code_mode)?;
         let code = args.input.code.clone();
         let disclosure = self.disclosure;
 
@@ -274,11 +282,13 @@ impl CodeExecutionClient {
 
 fn create_tool_callback(
     session_id: String,
+    working_dir: Option<PathBuf>,
     full_name: String,
     manager: Arc<crate::agents::ExtensionManager>,
 ) -> CallbackFn {
     Arc::new(move |args: Option<Value>| {
         let session_id = session_id.clone();
+        let working_dir = working_dir.clone();
         let full_name = full_name.clone();
         let manager = manager.clone();
         Box::pin(async move {
@@ -289,7 +299,7 @@ fn create_tool_callback(
                 }
                 params
             };
-            let ctx = crate::agents::ToolCallContext::new(session_id, None, None);
+            let ctx = crate::agents::ToolCallContext::new(session_id, working_dir, None);
             match manager
                 .dispatch_tool_call(&ctx, tool_call, CancellationToken::new())
                 .await
@@ -457,7 +467,10 @@ impl McpClientTrait for CodeExecutionClient {
                     .await
             }
             "execute_bash" => self.handle_execute_bash(session_id, arguments).await,
-            "execute_typescript" => self.handle_execute_typescript(session_id, arguments).await,
+            "execute_typescript" => {
+                self.handle_execute_typescript(session_id, ctx.working_dir.clone(), arguments)
+                    .await
+            }
             _ => Err(format!("Unknown tool: {name}")),
         };
 
