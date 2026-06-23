@@ -400,11 +400,11 @@ async fn resume_agent(
 
     let (extension_results, session) = if payload.load_model_and_extensions {
         let agent = state
-            .get_agent_with_session_start_hook(payload.session_id.clone())
+            .get_agent_for_route_with_session_start_hook(payload.session_id.clone())
             .await
-            .map_err(|e| ErrorResponse {
-                message: format!("Failed to get agent for route: {}", e),
-                status: StatusCode::INTERNAL_SERVER_ERROR,
+            .map_err(|code| ErrorResponse {
+                message: "Failed to get agent for route".into(),
+                status: code,
             })?;
 
         if !state.has_extension_loading_task(&payload.session_id).await {

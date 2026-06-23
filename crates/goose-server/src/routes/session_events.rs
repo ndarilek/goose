@@ -332,12 +332,8 @@ pub async fn session_reply(
 
     if is_elicitation_response {
         let agent = state
-            .get_agent_with_session_start_hook(session_id.clone())
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to get session agent: {}", e);
-                ErrorResponse::internal(format!("Failed to get session agent: {}", e))
-            })?;
+            .get_agent_for_route_with_session_start_hook(session_id.clone())
+            .await?;
         let session_config = goose::agents::types::SessionConfig {
             id: session_id.clone(),
             schedule_id: session_data.schedule_id.clone(),

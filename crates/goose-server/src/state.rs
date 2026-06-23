@@ -184,6 +184,18 @@ impl AppState {
         Ok(agent)
     }
 
+    pub async fn get_agent_for_route_with_session_start_hook(
+        &self,
+        session_id: String,
+    ) -> Result<Arc<goose::agents::Agent>, StatusCode> {
+        self.get_agent_with_session_start_hook(session_id)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to get agent: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })
+    }
+
     pub async fn emit_session_end_hook(&self, session_id: &str) {
         let should_emit = {
             let mut started_sessions = self.lifecycle_started_sessions.lock().await;
