@@ -1365,6 +1365,7 @@ export type Session = {
     recipe?: Recipe | null;
     schedule_id?: string | null;
     session_type?: SessionType;
+    system_prompt?: string | null;
     updated_at: string;
     usage?: Usage;
     user_recipe_values?: {
