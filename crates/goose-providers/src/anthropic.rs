@@ -26,6 +26,8 @@ use rmcp::model::Tool;
 pub const ANTHROPIC_DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 pub const ANTHROPIC_DEFAULT_FAST_MODEL: &str = "claude-haiku-4-5";
 const ANTHROPIC_KNOWN_MODELS: &[&str] = &[
+    "claude-opus-4-8",
+    "claude-opus-4-7",
     // Claude 4.6 models
     "claude-opus-4-6",
     "claude-sonnet-4-6",
@@ -86,11 +88,6 @@ impl AnthropicProviderBuilder {
             skip_canonical_filtering: false,
             format_options: AnthropicFormatOptions::default(),
         }
-    }
-
-    pub fn api_client(mut self, api_client: ApiClient) -> Self {
-        self.api_client = api_client;
-        self
     }
 
     pub fn supports_streaming(mut self, supports_streaming: bool) -> Self {
