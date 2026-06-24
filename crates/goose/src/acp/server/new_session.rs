@@ -89,7 +89,13 @@ impl GooseAcpAgent {
         // and no error path is added.
         if let Some(text) = system_prompt {
             agent
-                .extend_system_prompt("system_prompt".into(), text)
+                .extend_system_prompt("system_prompt".into(), text.clone())
+                .await;
+            let _ = self
+                .session_manager
+                .update(&session.id)
+                .system_prompt(Some(text))
+                .apply()
                 .await;
         }
 
@@ -311,6 +317,12 @@ mod tests {
     #[test]
     fn test_client_system_prompt_whitespace_only_returns_none() {
         let request = request_with_system_prompt(Some("   \n\t "));
+        assert_eq!(client_system_prompt(&request), None);
+    }
+
+    #[test]
+    fn test_client_system_prompt_empty_string_returns_none() {
+        let request = request_with_system_prompt(Some(""));
         assert_eq!(client_system_prompt(&request), None);
     }
 }
