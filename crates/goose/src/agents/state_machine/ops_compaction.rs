@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
 use crate::agents::AgentEvent;
 use crate::config::Config;
 use crate::context_mgmt::{compact_messages, DEFAULT_COMPACTION_THRESHOLD};
@@ -173,7 +173,7 @@ impl Operation for CompactionOperation {
                     ),
                 ))
                 .await;
-                Ok(TurnOutcome::continue_with([compacted.into()]))
+                Ok(vec![compacted.into()])
             }
             Err(e) => {
                 emit.emit(AgentEvent::Message(Message::assistant().with_text(
@@ -183,7 +183,7 @@ impl Operation for CompactionOperation {
                     ),
                 )))
                 .await;
-                Ok(TurnOutcome::yield_to_client())
+                Ok(vec![TurnEffect::YieldToClient])
             }
         }
     }

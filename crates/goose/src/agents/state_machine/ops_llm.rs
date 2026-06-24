@@ -43,7 +43,7 @@ impl LlmOperation {
         tracing::error!("LLM provider error: {err}");
         let message = Message::from_provider_error(err);
         emit.emit(AgentEvent::Message(message.clone())).await;
-        TurnOutcome::continue_with([message.into()])
+        vec![message.into()]
     }
 }
 
@@ -119,8 +119,6 @@ impl Operation for LlmOperation {
             }
         }
 
-        Ok(TurnOutcome::continue_with(
-            accumulator.into_iter().map(Into::into),
-        ))
+        Ok(accumulator.into_iter().map(Into::into).collect())
     }
 }

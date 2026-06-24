@@ -7,9 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agents::agent::DEFAULT_MAX_TURNS;
-use crate::agents::state_machine::operation::{
-    Emitter, Operation, TurnControl, TurnEffect, TurnOutcome,
-};
+use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
 use crate::agents::state_machine::ops_compaction::CompactionOperation;
 use crate::agents::state_machine::ops_exit_on_error::ExitOnErrorOperation;
 use crate::agents::state_machine::ops_llm::LlmOperation;
@@ -132,7 +130,8 @@ pub async fn reply(
                 yield event;
             }
 
-            for effect in outcome.effects {
+            let mut should_yield = false;
+            for effect in outcome {
                 match effect {
                     TurnEffect::AppendMessage(message) => {
                         session_manager.add_message(&session.id, &message).await?;
@@ -151,10 +150,13 @@ pub async fn reply(
                             .await?;
                         yield AgentEvent::HistoryReplaced(conversation);
                     }
+                    TurnEffect::YieldToClient => {
+                        should_yield = true;
+                        break;
+                    }
                 }
             }
-
-            if matches!(outcome.control, TurnControl::YieldToClient) {
+            if should_yield {
                 break;
             }
         }

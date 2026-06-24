@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rmcp::model::Role;
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
 use crate::agents::AgentEvent;
 use crate::conversation::message::Message;
 use crate::session::Session;
@@ -52,6 +52,6 @@ impl Operation for MaxTurnsOperation {
              Would you like me to continue?",
         );
         emit.emit(AgentEvent::Message(message)).await;
-        Ok(TurnOutcome::yield_to_client())
+        Ok(vec![TurnEffect::YieldToClient])
     }
 }

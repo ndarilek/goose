@@ -19,44 +19,13 @@ pub trait Operation: Send + Sync {
     async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome>;
 }
 
-/// A state mutation the machine applies after an operation finishes.
+pub type TurnOutcome = Vec<TurnEffect>;
+
+/// One action the machine applies after an operation finishes.
 pub enum TurnEffect {
     AppendMessage(Message),
     ReplaceConversation(Conversation),
-}
-
-/// Whether the machine should keep selecting operations after applying effects.
-pub enum TurnControl {
-    Continue,
     YieldToClient,
-}
-
-/// What an operation returns when it finishes: an ordered batch of effects,
-/// then a control-flow decision. Ops produce realtime events via `Emitter`
-/// during execution; the machine applies all effects after the op completes.
-pub struct TurnOutcome {
-    pub effects: Vec<TurnEffect>,
-    pub control: TurnControl,
-}
-
-impl TurnOutcome {
-    pub fn continue_with(effects: impl IntoIterator<Item = TurnEffect>) -> Self {
-        Self {
-            effects: effects.into_iter().collect(),
-            control: TurnControl::Continue,
-        }
-    }
-
-    pub fn yield_with(effects: impl IntoIterator<Item = TurnEffect>) -> Self {
-        Self {
-            effects: effects.into_iter().collect(),
-            control: TurnControl::YieldToClient,
-        }
-    }
-
-    pub fn yield_to_client() -> Self {
-        Self::yield_with([])
-    }
 }
 
 impl From<Message> for TurnEffect {

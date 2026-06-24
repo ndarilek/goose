@@ -298,7 +298,7 @@ impl TestHarness {
         let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
         let config = AgentConfig::new(
             session_manager.clone(),
-            PermissionManager::instance(),
+            Arc::new(PermissionManager::new(temp_dir.path().join("permissions"))),
             None,
             GooseMode::Auto,
             true,

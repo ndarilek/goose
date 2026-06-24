@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
 use crate::session::Session;
 
 /// Terminal catch-all: if the conversation ends in a tagged error message that
@@ -27,6 +27,6 @@ impl Operation for ExitOnErrorOperation {
     }
 
     async fn run(&self, _session: &Session, _emit: Emitter) -> Result<TurnOutcome> {
-        Ok(TurnOutcome::yield_to_client())
+        Ok(vec![TurnEffect::YieldToClient])
     }
 }
