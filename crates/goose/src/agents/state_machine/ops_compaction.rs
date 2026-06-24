@@ -173,7 +173,7 @@ impl Operation for CompactionOperation {
                     ),
                 ))
                 .await;
-                Ok(TurnOutcome::ReplaceConversation(compacted))
+                Ok(TurnOutcome::continue_with([compacted.into()]))
             }
             Err(e) => {
                 emit.emit(AgentEvent::Message(Message::assistant().with_text(
@@ -183,7 +183,7 @@ impl Operation for CompactionOperation {
                     ),
                 )))
                 .await;
-                Ok(TurnOutcome::YieldToClient)
+                Ok(TurnOutcome::yield_to_client())
             }
         }
     }

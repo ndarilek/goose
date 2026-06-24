@@ -38,7 +38,7 @@ state_machine/
 - [x] `ToolExecutionOperation` — bare execute-and-respond (no approval/frontend/chat-mode)
 - [x] `MaxTurnsOperation` — halts the loop after `max_turns` assistant turns this request
 - [x] `CompactionOperation` — proactive auto-compact before an LLM call (returns `ReplaceConversation`)
-- [x] Machine driver applies `AppendMessages`, `ReplaceConversation`, `YieldToClient`
+- [x] Machine driver applies ordered `TurnEffect`s, then follows `TurnControl`
 - [x] Machine clears stale `total_tokens` on `ReplaceConversation` so compaction can't re-trigger
 - [x] Cancellation plumbed through the machine + `Emitter`
 - [ ] More operations (see backlog below)
@@ -118,19 +118,28 @@ they exist.
 ### `TurnOutcome`
 
 ```rust
-pub enum TurnOutcome {
-    AppendMessages(Vec<Message>),
+pub enum TurnEffect {
+    AppendMessage(Message),
     ReplaceConversation(Conversation),
-    // TODO: UpdateSession(SessionUpdate)
+}
+
+pub enum TurnControl {
+    Continue,
     YieldToClient,
+}
+
+pub struct TurnOutcome {
+    effects: Vec<TurnEffect>,
+    control: TurnControl,
 }
 ```
 
-The machine commits the outcome to `session` and persists it via
-`SessionManager`. It does **not** auto-emit events for `AppendMessages` —
-ops already streamed what they wanted visible. The `Conversation` type
-handles chunk merging on `push`, so the LLM op can push raw provider chunks
-and get a clean merged final result.
+The machine applies all effects in order via `SessionManager`, then either
+continues selecting operations or yields to the client. This lets one op
+perform a small transaction — for example "mark this message invisible, append
+that response, then yield" once metadata-update effects land — without
+relying on a two-pass op dance. It does **not** auto-emit events for appended
+messages; ops already streamed what they wanted visible.
 
 ### Machine driver
 

@@ -157,6 +157,6 @@ impl Operation for ToolExecutionOperation {
         }
 
         emit.emit(AgentEvent::Message(response.clone())).await;
-        Ok(TurnOutcome::AppendMessages(vec![response]))
+        Ok(TurnOutcome::continue_with([response.into()]))
     }
 }

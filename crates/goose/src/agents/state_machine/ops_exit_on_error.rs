@@ -27,6 +27,6 @@ impl Operation for ExitOnErrorOperation {
     }
 
     async fn run(&self, _session: &Session, _emit: Emitter) -> Result<TurnOutcome> {
-        Ok(TurnOutcome::YieldToClient)
+        Ok(TurnOutcome::yield_to_client())
     }
 }

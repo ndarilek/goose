@@ -52,6 +52,6 @@ impl Operation for MaxTurnsOperation {
              Would you like me to continue?",
         );
         emit.emit(AgentEvent::Message(message)).await;
-        Ok(TurnOutcome::YieldToClient)
+        Ok(TurnOutcome::yield_to_client())
     }
 }

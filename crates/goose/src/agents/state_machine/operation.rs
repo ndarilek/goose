@@ -19,24 +19,56 @@ pub trait Operation: Send + Sync {
     async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome>;
 }
 
-/// What an operation returns when it finishes.
-///
-/// Ops produce events via `Emitter` *during* execution; the outcome describes
-/// the state change to commit *after*. The machine applies the outcome but
-/// does not derive client events from it — ops are responsible for emitting
-/// what they want the client to see.
-///
-pub enum TurnOutcome {
-    /// Append messages to the conversation
-    AppendMessages(Vec<Message>),
-
-    /// Replace the entire conversation (compaction, `/clear`, …)
+/// A state mutation the machine applies after an operation finishes.
+pub enum TurnEffect {
+    AppendMessage(Message),
     ReplaceConversation(Conversation),
+}
 
-    // TODO: `UpdateSession(SessionUpdate)` — variants added as ops need them
-    // (provider name, model config, goose_mode, …).
-    /// Hand control back to the caller and stop the loop
+/// Whether the machine should keep selecting operations after applying effects.
+pub enum TurnControl {
+    Continue,
     YieldToClient,
+}
+
+/// What an operation returns when it finishes: an ordered batch of effects,
+/// then a control-flow decision. Ops produce realtime events via `Emitter`
+/// during execution; the machine applies all effects after the op completes.
+pub struct TurnOutcome {
+    pub effects: Vec<TurnEffect>,
+    pub control: TurnControl,
+}
+
+impl TurnOutcome {
+    pub fn continue_with(effects: impl IntoIterator<Item = TurnEffect>) -> Self {
+        Self {
+            effects: effects.into_iter().collect(),
+            control: TurnControl::Continue,
+        }
+    }
+
+    pub fn yield_with(effects: impl IntoIterator<Item = TurnEffect>) -> Self {
+        Self {
+            effects: effects.into_iter().collect(),
+            control: TurnControl::YieldToClient,
+        }
+    }
+
+    pub fn yield_to_client() -> Self {
+        Self::yield_with([])
+    }
+}
+
+impl From<Message> for TurnEffect {
+    fn from(message: Message) -> Self {
+        TurnEffect::AppendMessage(message)
+    }
+}
+
+impl From<Conversation> for TurnEffect {
+    fn from(conversation: Conversation) -> Self {
+        TurnEffect::ReplaceConversation(conversation)
+    }
 }
 
 /// An op's handle to the machine: emit events the client should see, and

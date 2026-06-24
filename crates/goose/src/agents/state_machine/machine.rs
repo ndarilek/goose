@@ -7,7 +7,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agents::agent::DEFAULT_MAX_TURNS;
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{
+    Emitter, Operation, TurnControl, TurnEffect, TurnOutcome,
+};
 use crate::agents::state_machine::ops_compaction::CompactionOperation;
 use crate::agents::state_machine::ops_exit_on_error::ExitOnErrorOperation;
 use crate::agents::state_machine::ops_llm::LlmOperation;
@@ -130,27 +132,30 @@ pub async fn reply(
                 yield event;
             }
 
-            match outcome {
-                TurnOutcome::AppendMessages(messages) => {
-                    for msg in &messages {
-                        session_manager.add_message(&session.id, msg).await?;
+            for effect in outcome.effects {
+                match effect {
+                    TurnEffect::AppendMessage(message) => {
+                        session_manager.add_message(&session.id, &message).await?;
+                    }
+                    TurnEffect::ReplaceConversation(conversation) => {
+                        session_manager
+                            .replace_conversation(&session.id, &conversation)
+                            .await?;
+                        // The recorded usage described the old conversation; clear it
+                        // so the next iteration recomputes against the new one rather
+                        // than re-triggering compaction on a stale token count.
+                        session_manager
+                            .update(&session.id)
+                            .usage(Usage::default())
+                            .apply()
+                            .await?;
+                        yield AgentEvent::HistoryReplaced(conversation);
                     }
                 }
-                TurnOutcome::ReplaceConversation(conversation) => {
-                    session_manager
-                        .replace_conversation(&session.id, &conversation)
-                        .await?;
-                    // The recorded usage described the old conversation; clear it
-                    // so the next iteration recomputes against the new one rather
-                    // than re-triggering compaction on a stale token count.
-                    session_manager
-                        .update(&session.id)
-                        .usage(Usage::default())
-                        .apply()
-                        .await?;
-                    yield AgentEvent::HistoryReplaced(conversation);
-                }
-                TurnOutcome::YieldToClient => break,
+            }
+
+            if matches!(outcome.control, TurnControl::YieldToClient) {
+                break;
             }
         }
     }))
