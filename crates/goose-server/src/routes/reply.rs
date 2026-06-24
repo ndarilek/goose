@@ -14,7 +14,6 @@ use futures::{stream::StreamExt, Stream};
 use goose::agents::{AgentEvent, SessionConfig};
 use goose::conversation::message::{Message, MessageContent, TokenState};
 use goose::conversation::Conversation;
-use goose::providers::base::ProviderUsage;
 use goose::session::SessionManager;
 use rmcp::model::ServerNotification;
 use serde::{Deserialize, Serialize};
@@ -130,9 +129,6 @@ pub enum MessageEvent {
     Message {
         message: Message,
         token_state: TokenState,
-    },
-    Usage {
-        usage: ProviderUsage,
     },
     Error {
         error: String,
@@ -352,9 +348,7 @@ pub async fn reply(
 
                             stream_event(MessageEvent::Message { message, token_state }, &tx, &cancel_token).await;
                         }
-                        Ok(Some(Ok(AgentEvent::Usage(usage)))) => {
-                            stream_event(MessageEvent::Usage { usage }, &tx, &cancel_token).await;
-                        }
+                        Ok(Some(Ok(AgentEvent::Usage(_)))) => {}
                         Ok(Some(Ok(AgentEvent::HistoryReplaced(new_messages)))) => {
                             all_messages = new_messages.clone();
                             stream_event(MessageEvent::UpdateConversation {conversation: new_messages}, &tx, &cancel_token).await;

@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderUsage {
     pub model: String,
     pub usage: Usage,
@@ -11,7 +11,7 @@ pub struct ProviderUsage {
     pub stats: Option<ProviderStats>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderStats {
     pub time_to_first_token_ms: Option<u64>,
     pub elapsed_ms: Option<u64>,
@@ -19,7 +19,7 @@ pub struct ProviderStats {
     pub draft: Option<DraftStats>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DraftStats {
     pub model: Option<String>,
     pub draft_tokens: usize,
