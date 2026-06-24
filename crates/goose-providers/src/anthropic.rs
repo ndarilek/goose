@@ -197,6 +197,7 @@ impl ProviderDescriptor for AnthropicProvider {
                 ),
             ],
         )
+        .with_fast_model(ANTHROPIC_DEFAULT_FAST_MODEL)
         .with_setup_steps(vec![
             "Go to https://platform.claude.com/settings/keys",
             "Click 'Create Key'",

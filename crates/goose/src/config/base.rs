@@ -1161,12 +1161,6 @@ impl Config {
         }
     }
 
-    pub fn get_legacy_thinking_budget(&self) -> Option<i32> {
-        self.get_param::<i32>("CLAUDE_THINKING_BUDGET")
-            .ok()
-            .map(|budget| budget.max(1024))
-    }
-
     pub fn get_goose_thinking_effort(&self) -> Option<ThinkingEffort> {
         self.get_param::<String>("GOOSE_THINKING_EFFORT")
             .ok()
