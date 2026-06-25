@@ -3,7 +3,7 @@ import { defineMessages, useIntl } from '../i18n';
 import { AppEvents } from '../constants/events';
 import { ChatState } from '../types/chatState';
 
-import { Message, Session, TokenState, updateFromSession } from '../api';
+import { Message, Session, TokenState } from '../api';
 
 import { createUserMessage, NotificationEvent, UserInput } from '../types/message';
 import { errorMessage } from '../utils/conversionUtils';
@@ -271,17 +271,6 @@ export function useAcpChatSession({
     },
     [getCurrentSnapshot, sessionId]
   );
-
-  useEffect(() => {
-    if (session) {
-      updateFromSession({
-        body: {
-          session_id: session.id,
-        },
-        throwOnError: true,
-      });
-    }
-  }, [session]);
 
   const stopStreaming = useCallback(() => {
     acpChatSessionController.stop(sessionId);
