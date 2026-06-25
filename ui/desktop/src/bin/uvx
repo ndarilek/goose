@@ -123,7 +123,9 @@ fi
 # Activate the environment with output redirected to log
 if [[ "$(uname -s)" == "Linux" ]]; then
     log "Activating hermit environment."
-    { . "bin/activate-hermit"; } >> "$LOG_FILE" 2>&1
+    # Apply hermit env directly (see node-setup-common.sh): avoids shell-specific
+    # `hermit activate` output that breaks this wrapper under a fish login shell.
+    eval "$(hermit env | sed 's/^/export /')" >> "$LOG_FILE" 2>&1
 fi
 
 # Initialize python >= 3.10
