@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "Используйте локальную модель или провайдера с бесплатными кредитами"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "Провайдер"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "Выберите провайдера"
   },

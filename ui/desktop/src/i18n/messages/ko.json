@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "무료 크레딧이 있는 로컬 모델이나 제공업체를 사용하세요."
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "제공업체"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "제공업체 선택"
   },

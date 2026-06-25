@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "स्थानीय मॉडल या मुफ़्त क्रेडिट वाले प्रदाता का उपयोग करें"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "प्रदाता"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "एक प्रदाता चुनें"
   },

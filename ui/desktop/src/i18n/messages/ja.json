@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "ローカルモデルまたは無料クレジット付きのプロバイダーを使用"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "プロバイダー"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "プロバイダーを選択"
   },

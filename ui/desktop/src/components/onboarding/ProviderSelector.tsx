@@ -12,6 +12,7 @@ import CustomProviderForm from '../settings/providers/modal/subcomponents/forms/
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Gift, Key, Plus } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
+import { activateOnKey } from '../../utils/a11y';
 
 const i18n = defineMessages({
   useFreeLocal: {
@@ -33,6 +34,10 @@ const i18n = defineMessages({
   selectProvider: {
     id: 'providerSelector.selectProvider',
     defaultMessage: 'Select a provider',
+  },
+  providerLabel: {
+    id: 'providerSelector.providerLabel',
+    defaultMessage: 'Provider',
   },
   addCustomProvider: {
     id: 'providerSelector.addCustomProvider',
@@ -140,7 +145,11 @@ export default function ProviderSelector({
     <div>
       <div className="grid grid-cols-2 gap-3 mb-6">
         <div
+          role="button"
+          tabIndex={0}
           onClick={handleFreeCreditClick}
+          onKeyDown={activateOnKey(handleFreeCreditClick)}
+          aria-pressed={selectedPath === FREE_OPTIONS}
           className={`p-4 border rounded-xl transition-all duration-200 cursor-pointer group ${
             selectedPath === FREE_OPTIONS
               ? 'border-blue-400 bg-background-muted'
@@ -157,7 +166,11 @@ export default function ProviderSelector({
         </div>
 
         <div
+          role="button"
+          tabIndex={0}
           onClick={handleOwnProviderClick}
+          onKeyDown={activateOnKey(handleOwnProviderClick)}
+          aria-pressed={selectedPath === OWN_PROVIDER}
           className={`p-4 border rounded-xl transition-all duration-200 cursor-pointer group ${
             selectedPath === OWN_PROVIDER
               ? 'border-blue-400 bg-background-muted'
@@ -168,7 +181,9 @@ export default function ProviderSelector({
           <span className="font-medium text-text-default text-base block">
             {intl.formatMessage(i18n.connectProvider)}
           </span>
-          <p className="text-text-muted text-sm mt-1">{intl.formatMessage(i18n.connectProviderDescription)}</p>
+          <p className="text-text-muted text-sm mt-1">
+            {intl.formatMessage(i18n.connectProviderDescription)}
+          </p>
         </div>
       </div>
 
@@ -186,6 +201,7 @@ export default function ProviderSelector({
               value={selectedOption}
               onChange={(option) => handleProviderSelect(option as ProviderOption | null)}
               placeholder={intl.formatMessage(i18n.selectProvider)}
+              aria-label={intl.formatMessage(i18n.providerLabel)}
               isClearable
               isSearchable
               autoFocus

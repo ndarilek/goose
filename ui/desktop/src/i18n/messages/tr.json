@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "Yerel bir model veya ücretsiz kredili bir sağlayıcı kullanın"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "Sağlayıcı"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "Bir sağlayıcı seçin"
   },

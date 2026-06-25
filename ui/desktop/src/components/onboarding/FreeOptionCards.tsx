@@ -6,6 +6,7 @@ import LocalModelPicker from './LocalModelPicker';
 import { HardDrive } from 'lucide-react';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
+import { activateOnKey } from '../../utils/a11y';
 
 const i18n = defineMessages({
   chooseOption: {
@@ -18,7 +19,8 @@ const i18n = defineMessages({
   },
   tetrateDescription: {
     id: 'freeOptionCards.tetrateDescription',
-    defaultMessage: 'Access multiple AI models with automatic setup. Sign up to receive $10 credit.',
+    defaultMessage:
+      'Access multiple AI models with automatic setup. Sign up to receive $10 credit.',
   },
   nanogptTitle: {
     id: 'freeOptionCards.nanogptTitle',
@@ -122,7 +124,14 @@ export default function FreeOptionCards({ onConfigured }: FreeOptionCardsProps) 
         <p className="text-sm text-text-muted mb-4">{intl.formatMessage(i18n.chooseOption)}</p>
 
         <div className="flex flex-col gap-3">
-          <div onClick={handleTetrateSetup} className={cardClass(selectedProvider === TETRATE)}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleTetrateSetup}
+            onKeyDown={activateOnKey(handleTetrateSetup)}
+            aria-pressed={selectedProvider === TETRATE}
+            className={cardClass(selectedProvider === TETRATE)}
+          >
             <div className="flex items-start justify-between mb-1">
               <div className="flex items-center gap-2">
                 <Tetrate className="w-5 h-5 text-text-default" />
@@ -134,34 +143,47 @@ export default function FreeOptionCards({ onConfigured }: FreeOptionCardsProps) 
                 <ChevronRight />
               </div>
             </div>
-            <p className="text-text-muted text-sm">
-              {intl.formatMessage(i18n.tetrateDescription)}
-            </p>
+            <p className="text-text-muted text-sm">{intl.formatMessage(i18n.tetrateDescription)}</p>
           </div>
 
-          <div onClick={handleNanogptSetup} className={cardClass(selectedProvider === NANOGPT)}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleNanogptSetup}
+            onKeyDown={activateOnKey(handleNanogptSetup)}
+            aria-pressed={selectedProvider === NANOGPT}
+            className={cardClass(selectedProvider === NANOGPT)}
+          >
             <div className="flex items-start justify-between mb-1">
               <div className="flex items-center gap-2">
                 <span className="w-5 h-5 flex items-center justify-center text-text-default text-xs font-bold">
                   N
                 </span>
-                <span className="font-medium text-text-default text-base">{intl.formatMessage(i18n.nanogptTitle)}</span>
+                <span className="font-medium text-text-default text-base">
+                  {intl.formatMessage(i18n.nanogptTitle)}
+                </span>
               </div>
               <div className="text-text-muted group-hover:text-text-default transition-colors">
                 <ChevronRight />
               </div>
             </div>
-            <p className="text-text-muted text-sm">
-              {intl.formatMessage(i18n.nanogptDescription)}
-            </p>
+            <p className="text-text-muted text-sm">{intl.formatMessage(i18n.nanogptDescription)}</p>
           </div>
 
           {localInference && (
-            <div onClick={handleRunLocallyClick} className={cardClass(false)}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={handleRunLocallyClick}
+              onKeyDown={activateOnKey(handleRunLocallyClick)}
+              className={cardClass(false)}
+            >
               <div className="flex items-start justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <HardDrive className="w-5 h-5 text-text-default" />
-                  <span className="font-medium text-text-default text-base">{intl.formatMessage(i18n.localModelTitle)}</span>
+                  <span className="font-medium text-text-default text-base">
+                    {intl.formatMessage(i18n.localModelTitle)}
+                  </span>
                   <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-green-600 text-white rounded-full">
                     {intl.formatMessage(i18n.freeAndPrivate)}
                   </span>

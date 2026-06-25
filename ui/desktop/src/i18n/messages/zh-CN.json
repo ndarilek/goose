@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "使用本地模型或带有免费额度的提供商"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "提供商"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "选择提供商"
   },

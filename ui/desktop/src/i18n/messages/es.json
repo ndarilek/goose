@@ -2813,6 +2813,9 @@
   "providerSelector.freeLocalDescription": {
     "defaultMessage": "Usa un modelo local o un proveedor con créditos gratis"
   },
+  "providerSelector.providerLabel": {
+    "defaultMessage": "Proveedor"
+  },
   "providerSelector.selectProvider": {
     "defaultMessage": "Selecciona un proveedor"
   },

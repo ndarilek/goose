@@ -66,7 +66,8 @@ const i18n = defineMessages({
   },
   localModelsNote: {
     id: 'localModelPicker.localModelsNote',
-    defaultMessage: 'Local models keep everything on your machine for full privacy. Performance and context window size may vary compared to cloud providers depending on your hardware and model size.',
+    defaultMessage:
+      'Local models keep everything on your machine for full privacy. Performance and context window size may vary compared to cloud providers depending on your hardware and model size.',
   },
   failedToLoad: {
     id: 'localModelPicker.failedToLoad',
@@ -285,13 +286,18 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
                 <div className="flex items-start gap-3">
                   <input
                     type="radio"
+                    name="local-model"
                     checked={selectedModelId === recommended.id}
                     onChange={() => setSelectedModelId(recommended.id)}
+                    aria-labelledby={`local-model-${recommended.id}-label`}
                     className="cursor-pointer flex-shrink-0 mt-1"
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-text-default text-sm">
+                      <span
+                        id={`local-model-${recommended.id}-label`}
+                        className="font-medium text-text-default text-sm"
+                      >
                         {recommended.id}
                       </span>
                       {recommended.status.state === 'Downloaded' && (
@@ -314,7 +320,9 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
                   onClick={() => setShowAllModels(!showAllModels)}
                   className="text-sm text-blue-500 hover:text-blue-400 transition-colors flex items-center gap-1"
                 >
-                  {showAllModels ? intl.formatMessage(i18n.hideOtherSizes) : intl.formatMessage(i18n.showOtherSizes, { count: otherModels.length })}
+                  {showAllModels
+                    ? intl.formatMessage(i18n.hideOtherSizes)
+                    : intl.formatMessage(i18n.showOtherSizes, { count: otherModels.length })}
                   <svg
                     className={`w-3.5 h-3.5 transition-transform ${showAllModels ? 'rotate-180' : ''}`}
                     fill="none"
@@ -345,13 +353,18 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
                         <div className="flex items-start gap-3">
                           <input
                             type="radio"
+                            name="local-model"
                             checked={selectedModelId === model.id}
                             onChange={() => setSelectedModelId(model.id)}
+                            aria-labelledby={`local-model-${model.id}-label`}
                             className="cursor-pointer flex-shrink-0 mt-0.5"
                           />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium text-text-default text-sm">
+                              <span
+                                id={`local-model-${model.id}-label`}
+                                className="font-medium text-text-default text-sm"
+                              >
                                 {model.id}
                               </span>
                               <span className="text-xs text-text-muted">
@@ -380,7 +393,10 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
               {selectedModel?.status.state === 'Downloaded'
                 ? intl.formatMessage(i18n.useModel, { modelId: selectedModel.id })
                 : selectedModel
-                  ? intl.formatMessage(i18n.downloadModel, { modelId: selectedModel.id, size: formatSize(selectedModel.size_bytes) })
+                  ? intl.formatMessage(i18n.downloadModel, {
+                      modelId: selectedModel.id,
+                      size: formatSize(selectedModel.size_bytes),
+                    })
                   : intl.formatMessage(i18n.selectModel)}
             </button>
 
@@ -398,13 +414,26 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
         {phase === 'downloading' && selectedModel && (
           <div className="space-y-3">
             <div className="border border-border-subtle rounded-lg p-4 bg-background-default">
-              <p className="font-medium text-text-default text-sm mb-3">
+              <p
+                id="local-model-download-label"
+                className="font-medium text-text-default text-sm mb-3"
+              >
                 {intl.formatMessage(i18n.downloading, { modelId: selectedModel.id })}
               </p>
 
               {downloadProgress ? (
                 <div className="space-y-2">
-                  <div className="w-full bg-background-subtle rounded-full h-2 overflow-hidden">
+                  <div
+                    role="progressbar"
+                    aria-labelledby="local-model-download-label"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(downloadProgress.progress_percent)}
+                    aria-valuetext={`${downloadProgress.progress_percent.toFixed(0)}%, ${formatBytes(
+                      downloadProgress.bytes_downloaded
+                    )} of ${formatBytes(downloadProgress.total_bytes)}`}
+                    className="w-full bg-background-subtle rounded-full h-2 overflow-hidden"
+                  >
                     <div
                       className="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out"
                       style={{ width: `${downloadProgress.progress_percent}%` }}
@@ -439,7 +468,9 @@ export default function LocalModelPicker({ onConfigured, onBack }: LocalModelPic
               ) : (
                 <div className="flex items-center gap-3">
                   <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-text-muted"></div>
-                  <span className="text-sm text-text-muted">{intl.formatMessage(i18n.startingDownload)}</span>
+                  <span className="text-sm text-text-muted">
+                    {intl.formatMessage(i18n.startingDownload)}
+                  </span>
                 </div>
               )}
             </div>
