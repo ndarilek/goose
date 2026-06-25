@@ -338,7 +338,7 @@ async fn start_agent(
     let session_id_for_task = session.id.clone();
     let task = tokio::spawn(async move {
         match state_for_spawn
-            .get_agent_with_session_start_hook(session_for_spawn.id.clone())
+            .get_agent(session_for_spawn.id.clone())
             .await
         {
             Ok(agent) => {
@@ -400,7 +400,7 @@ async fn resume_agent(
 
     let (extension_results, session) = if payload.load_model_and_extensions {
         let agent = state
-            .get_agent_for_route_with_session_start_hook(payload.session_id.clone())
+            .get_agent_for_route(payload.session_id.clone())
             .await
             .map_err(|code| ErrorResponse {
                 message: "Failed to get agent for route".into(),
@@ -844,7 +844,6 @@ async fn stop_agent(
     Json(payload): Json<StopAgentRequest>,
 ) -> Result<StatusCode, ErrorResponse> {
     let session_id = payload.session_id;
-    state.emit_session_end_hook(&session_id).await;
     state
         .agent_manager
         .remove_session(&session_id)

@@ -1197,7 +1197,7 @@ impl GooseAcpAgent {
         session_id: String,
         agent: Arc<Agent>,
         tool_requests: HashMap<String, ToolRequest>,
-    ) -> bool {
+    ) {
         let acp_session = GooseAcpSession {
             agent,
             tool_requests,
@@ -1205,37 +1205,7 @@ impl GooseAcpAgent {
             responded_tool_ids: HashSet::new(),
             summarized_chains: HashSet::new(),
         };
-        let mut sessions = self.sessions.lock().await;
-        let is_new = !sessions.contains_key(&session_id);
-        sessions.insert(session_id, acp_session);
-        is_new
-    }
-
-    async fn remove_active_session_and_emit_end_hook(&self, session_id: &str) {
-        let session = self.sessions.lock().await.remove(session_id);
-        if let Some(session) = session {
-            session
-                .agent
-                .emit_hook(crate::hooks::HookEvent::SessionEnd, session_id)
-                .await;
-        }
-    }
-
-    async fn register_active_session_and_emit_start_hook(
-        &self,
-        session_id: String,
-        agent: Arc<Agent>,
-        tool_requests: HashMap<String, ToolRequest>,
-    ) -> bool {
-        let should_emit_start = self
-            .register_acp_session(session_id.clone(), agent.clone(), tool_requests)
-            .await;
-        if should_emit_start {
-            agent
-                .emit_hook(crate::hooks::HookEvent::SessionStart, &session_id)
-                .await;
-        }
-        should_emit_start
+        self.sessions.lock().await.insert(session_id, acp_session);
     }
 
     async fn activate_acp_session(
@@ -1245,12 +1215,8 @@ impl GooseAcpAgent {
         tool_requests: HashMap<String, ToolRequest>,
     ) -> Result<(Arc<Agent>, Vec<ExtensionLoadResult>), agent_client_protocol::Error> {
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, session).await?;
-        self.register_active_session_and_emit_start_hook(
-            session.id.clone(),
-            agent.clone(),
-            tool_requests,
-        )
-        .await;
+        self.register_acp_session(session.id.clone(), agent.clone(), tool_requests)
+            .await;
 
         Ok((agent, extension_results))
     }
@@ -2932,8 +2898,9 @@ impl GooseAcpAgent {
             token.cancel();
         }
 
-        self.remove_active_session_and_emit_end_hook(session_id)
-            .await;
+        let mut sessions = self.sessions.lock().await;
+        sessions.remove(session_id);
+        drop(sessions);
 
         let _ = self.agent_manager.remove_session(session_id).await;
 
@@ -2993,7 +2960,6 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
 mod tests {
     use super::*;
     use crate::conversation::message::{ToolRequest, ToolResponse};
-    use crate::plugins::discovery::{DiscoveredPlugin, PluginScope};
     use crate::session::session_manager::SessionType;
     use agent_client_protocol::schema::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
@@ -3003,231 +2969,8 @@ mod tests {
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
     use std::io::Write;
     use std::path::PathBuf;
-    use std::time::Duration;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::NamedTempFile;
     use test_case::test_case;
-
-    struct AcpLifecycleHookTestEnv {
-        _temp_dir: TempDir,
-        acp: Arc<GooseAcpAgent>,
-        agent: Arc<Agent>,
-        hook_log: PathBuf,
-        plugin_root: PathBuf,
-        session_manager: Arc<SessionManager>,
-    }
-
-    impl AcpLifecycleHookTestEnv {
-        async fn new() -> Self {
-            Self::new_with_session_end_command("sh -c 'echo end >> \"$PLUGIN_ROOT/lifecycle.log\"'")
-                .await
-        }
-
-        async fn new_with_session_end_command(session_end_command: &str) -> Self {
-            let temp_dir = tempfile::tempdir().unwrap();
-            let plugin_root = temp_dir.path().join("lifecycle-hooks");
-            let hook_log = plugin_root.join("lifecycle.log");
-            std::fs::create_dir_all(plugin_root.join("hooks")).unwrap();
-            let hooks = serde_json::json!({
-                "hooks": {
-                    "SessionStart": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": "sh -c 'echo start >> \"$PLUGIN_ROOT/lifecycle.log\"'"
-                                }
-                            ]
-                        }
-                    ],
-                    "SessionEnd": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": session_end_command
-                                }
-                            ]
-                        }
-                    ]
-                }
-            });
-            std::fs::write(
-                plugin_root.join("hooks").join("hooks.json"),
-                serde_json::to_string_pretty(&hooks).unwrap(),
-            )
-            .unwrap();
-
-            let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("sessions")));
-            let permission_manager =
-                Arc::new(PermissionManager::new(temp_dir.path().join("config")));
-            let agent_config = AgentConfig::new(
-                session_manager.clone(),
-                permission_manager.clone(),
-                None,
-                GooseMode::Auto,
-                true,
-                GoosePlatform::GooseCli,
-            );
-            let hook_manager =
-                crate::hooks::HookManager::from_plugins_for_test(vec![DiscoveredPlugin {
-                    name: "lifecycle-hooks".into(),
-                    root: plugin_root.clone(),
-                    scope: PluginScope::Project,
-                }]);
-            let mut agent = Agent::with_config(agent_config.clone());
-            agent.set_hook_manager_for_test(hook_manager);
-            let agent = Arc::new(agent);
-
-            let agent_manager = Arc::new(AgentManager::new(agent_config, None).await.unwrap());
-            let provider_factory: AcpProviderFactory =
-                Arc::new(|_, _, _, _| Box::pin(async { Err(anyhow::anyhow!("unused")) }));
-            let acp = Arc::new(GooseAcpAgent {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                active_prompt_runs: Arc::new(Mutex::new(HashMap::new())),
-                closed_session_ids: Arc::new(Mutex::new(HashSet::new())),
-                agent_manager,
-                provider_factory,
-                builtins: Vec::new(),
-                client_fs_capabilities: OnceCell::new(),
-                client_terminal: OnceCell::new(),
-                client_mcp_host_info: OnceCell::new(),
-                client_supports_acp_elicitation: OnceCell::new(),
-                client_supports_goose_custom_notifications: OnceCell::new(),
-                client_supports_recipe_param_requests: OnceCell::new(),
-                use_login_shell_path: OnceCell::new(),
-                client_cx: OnceCell::new(),
-                config_dir: temp_dir.path().join("config"),
-                session_manager: session_manager.clone(),
-                permission_manager,
-                disable_session_naming: true,
-                provider_inventory: ProviderInventoryService::new(
-                    session_manager.storage().clone(),
-                ),
-                additional_source_roots: Vec::new(),
-                recipe_path_cache: Arc::new(Mutex::new(HashMap::new())),
-            });
-
-            Self {
-                _temp_dir: temp_dir,
-                acp,
-                agent,
-                hook_log,
-                plugin_root,
-                session_manager,
-            }
-        }
-
-        fn hook_log_lines(&self) -> Vec<String> {
-            std::fs::read_to_string(&self.hook_log)
-                .unwrap_or_default()
-                .lines()
-                .map(ToString::to_string)
-                .collect()
-        }
-
-        async fn wait_for_hook_log_line(&self, expected: &str) {
-            tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    if self.hook_log_lines().iter().any(|line| line == expected) {
-                        return;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn acp_lifecycle_hooks_emit_once_per_active_session() {
-        let env = AcpLifecycleHookTestEnv::new().await;
-        let session_id = "acp-lifecycle-test".to_string();
-
-        assert!(
-            env.acp
-                .register_active_session_and_emit_start_hook(
-                    session_id.clone(),
-                    env.agent.clone(),
-                    HashMap::new(),
-                )
-                .await
-        );
-        assert!(
-            !env.acp
-                .register_active_session_and_emit_start_hook(
-                    session_id.clone(),
-                    env.agent.clone(),
-                    HashMap::new(),
-                )
-                .await
-        );
-
-        env.acp.on_close_session(&session_id).await.unwrap();
-        env.acp.on_close_session(&session_id).await.unwrap();
-
-        assert_eq!(env.hook_log_lines(), vec!["start", "end"]);
-    }
-
-    #[tokio::test]
-    async fn acp_delete_session_emits_end_hook_before_storage_delete() {
-        let env = AcpLifecycleHookTestEnv::new_with_session_end_command(
-            "sh -c 'echo end-start >> \"$PLUGIN_ROOT/lifecycle.log\"; while [ ! -f \"$PLUGIN_ROOT/continue-end\" ]; do sleep 0.05; done; echo end-finish >> \"$PLUGIN_ROOT/lifecycle.log\"'",
-        )
-        .await;
-        let session = env
-            .session_manager
-            .create_session(
-                env.plugin_root.clone(),
-                "Delete lifecycle test".to_string(),
-                SessionType::User,
-                GooseMode::Auto,
-            )
-            .await
-            .unwrap();
-        let session_id = session.id.clone();
-
-        assert!(
-            env.acp
-                .register_active_session_and_emit_start_hook(
-                    session_id.clone(),
-                    env.agent.clone(),
-                    HashMap::new(),
-                )
-                .await
-        );
-
-        let delete_task = {
-            let acp = env.acp.clone();
-            let session_id = session_id.clone();
-            tokio::spawn(async move {
-                acp.dispatch_custom_request(
-                    "session/delete",
-                    serde_json::json!({ "sessionId": session_id }),
-                )
-                .await
-            })
-        };
-
-        env.wait_for_hook_log_line("end-start").await;
-        env.session_manager
-            .get_session(&session_id, false)
-            .await
-            .unwrap();
-
-        std::fs::write(env.plugin_root.join("continue-end"), "").unwrap();
-        delete_task.await.unwrap().unwrap();
-
-        assert!(env
-            .session_manager
-            .get_session(&session_id, false)
-            .await
-            .is_err());
-        assert_eq!(
-            env.hook_log_lines(),
-            vec!["start", "end-start", "end-finish"]
-        );
-    }
 
     #[test_case(
         McpServer::Stdio(

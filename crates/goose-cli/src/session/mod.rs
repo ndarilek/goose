@@ -486,10 +486,6 @@ impl CliSession {
 
     /// Start an interactive session, optionally with an initial message
     pub async fn interactive(&mut self, prompt: Option<String>) -> Result<()> {
-        self.agent
-            .emit_hook(goose::hooks::HookEvent::SessionStart, &self.session_id)
-            .await;
-
         let result = self.run_interactive(prompt).await;
 
         self.agent
@@ -1134,9 +1130,6 @@ impl CliSession {
 
     /// Process a single message and exit
     pub async fn headless(&mut self, prompt: String) -> Result<()> {
-        self.agent
-            .emit_hook(goose::hooks::HookEvent::SessionStart, &self.session_id)
-            .await;
         let message = Message::user().with_text(&prompt);
         let result = self
             .process_message(message, CancellationToken::default(), false)
