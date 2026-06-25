@@ -120,6 +120,12 @@ pub trait KeyResolver {
 
 pub struct EnvKeyResolver;
 
+impl EnvKeyResolver {
+    pub fn new() -> Self {
+        EnvKeyResolver {}
+    }
+}
+
 impl KeyResolver for EnvKeyResolver {
     type Error = std::env::VarError;
 

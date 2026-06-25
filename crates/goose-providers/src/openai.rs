@@ -724,11 +724,15 @@ pub fn from_custom_config(
     let api_key = if config.api_key_env.is_empty() {
         None
     } else {
-        Some(
-            key_resolver
-                .resolve_key(config.api_key_env.as_str())
-                .map_err(|e| anyhow::Error::from(e))?,
-        )
+        match key_resolver.resolve_key(config.api_key_env.as_str()) {
+            Ok(key) => Some(key),
+            Err(err) => {
+                if config.requires_auth {
+                    anyhow::bail!("missing required key {}: {}", config.api_key_env, err);
+                }
+                None
+            }
+        }
     };
 
     let normalized_base_url = ensure_url_scheme(&config.base_url);
@@ -1088,5 +1092,38 @@ mod tests {
             ]
         });
         assert_eq!(parse_n_ctx_from_models(&body, "model-c"), None);
+    }
+
+    #[test]
+    fn derive_base_path_not_removing_api_path() {
+        let r = derive_base_path("https://opencode.ai/zen/go");
+        assert_eq!(r, "https://opencode.ai/zen/go/v1/chat/completions");
+    }
+
+    #[test]
+    fn derive_base_path_should_support_v1() {
+        let r = derive_base_path("https://opencode.ai/zen/go/v1");
+        assert_eq!(r, "https://opencode.ai/zen/go/v1/chat/completions");
+    }
+
+    #[test]
+    fn derive_base_path_should_support_no_base_path() {
+        let r = derive_base_path("https://opencode.ai/");
+        assert_eq!(r, "https://opencode.ai/v1/chat/completions");
+    }
+
+    #[test]
+    fn derive_base_path_preserves_non_v1_version_prefix() {
+        // Zhipu's default base_url is https://open.bigmodel.cn/api/paas/v4 and
+        // from_custom_config passes url.path() ("/api/paas/v4") here. The
+        // existing /api/paas/v4 version must not gain an extra /v1 segment.
+        let r = derive_base_path("/api/paas/v4");
+        assert_eq!(r, "api/paas/v4/chat/completions");
+    }
+
+    #[test]
+    fn derive_base_path_does_not_treat_v_word_as_version() {
+        let r = derive_base_path("/api/voice");
+        assert_eq!(r, "api/voice/v1/chat/completions");
     }
 }
