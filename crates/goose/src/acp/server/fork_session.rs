@@ -53,11 +53,11 @@ impl GooseAcpAgent {
 
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, &goose_session).await?;
         self.apply_session_recipe(&agent, &goose_session).await?;
-        self.register_acp_session(new_session_id.clone(), agent, HashMap::new())
+        self.register_acp_session(goose_session.id.clone(), agent, HashMap::new())
             .await;
 
         let acp_session_id = SessionId::new(new_session_id.clone());
-        let mut meta = session_meta(&new_session);
+        let mut meta = session_meta(&goose_session);
         if let Ok(v) = serde_json::to_value(&extension_results) {
             meta.insert("extensionResults".to_string(), v);
         }
