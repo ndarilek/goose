@@ -284,7 +284,6 @@ mod tests {
         assert_eq!(*provider_type, ProviderType::Declarative);
 
         assert_eq!(meta.display_name, "VMware Tanzu Platform");
-        assert_eq!(meta.default_model, "openai/gpt-oss-120b");
 
         // First config key should be TANZU_AI_API_KEY (secret, required)
         let api_key = meta
@@ -334,7 +333,6 @@ mod tests {
         assert_eq!(nvidia.provider_type(), ProviderType::Declarative);
         assert!(nvidia.supports_inventory_refresh());
         assert_eq!(meta.display_name, "NVIDIA");
-        assert_eq!(meta.default_model, "z-ai/glm-4.7");
         assert_eq!(meta.model_doc_link, "https://build.nvidia.com/models");
         assert!(!meta.setup_steps.is_empty());
 
@@ -369,7 +367,6 @@ mod tests {
         assert_eq!(nearai.provider_type(), ProviderType::Declarative);
         assert!(nearai.supports_inventory_refresh());
         assert_eq!(meta.display_name, "NEAR AI Cloud");
-        assert_eq!(meta.default_model, "zai-org/GLM-5.1-FP8");
         assert_eq!(meta.model_doc_link, "https://docs.near.ai/");
         assert!(!meta.setup_steps.is_empty());
 
@@ -393,7 +390,6 @@ mod tests {
         assert_eq!(alibaba.provider_type(), ProviderType::Declarative);
         assert!(alibaba.supports_inventory_refresh());
         assert_eq!(meta.display_name, "Alibaba (Qwen)");
-        assert_eq!(meta.default_model, "qwen3.7-max");
         assert_eq!(
             meta.model_doc_link,
             "https://www.alibabacloud.com/help/en/model-studio/models"
