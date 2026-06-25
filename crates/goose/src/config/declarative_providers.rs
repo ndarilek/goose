@@ -857,6 +857,59 @@ mod tests {
     }
 
     #[test]
+    fn test_bundled_providers_wire_into_registry_metadata() {
+        let configs = load_fixed_providers().expect("bundled providers should load");
+        assert!(!configs.is_empty(), "no bundled providers were found");
+
+        for config in configs {
+            let id = config.id().to_string();
+            let api_key_env = config.api_key_env.clone();
+            let requires_auth = config.requires_auth;
+            let env_vars = config.env_vars.clone().unwrap_or_default();
+
+            let mut registry = crate::providers::provider_registry::ProviderRegistry::new(None);
+            register_declarative_provider(&mut registry, config, ProviderType::Declarative);
+
+            let (meta, provider_type) = registry
+                .all_metadata_with_types()
+                .into_iter()
+                .find(|(m, _)| m.name == id)
+                .unwrap_or_else(|| panic!("{id} should register"));
+
+            assert_eq!(provider_type, ProviderType::Declarative, "{id}");
+            assert!(!meta.display_name.is_empty(), "{id} has empty display_name");
+
+            assert!(
+                !meta
+                    .config_keys
+                    .iter()
+                    .any(|k| k.name == "OPENAI_HOST" || k.name == "OPENAI_BASE_PATH"),
+                "{id} leaks OpenAI engine config keys"
+            );
+
+            if !api_key_env.is_empty() {
+                let key = meta
+                    .config_keys
+                    .iter()
+                    .find(|k| k.name == api_key_env)
+                    .unwrap_or_else(|| panic!("{id} should expose {api_key_env} config key"));
+                assert!(key.secret, "{id}: {api_key_env} should be secret");
+                assert_eq!(key.required, requires_auth, "{id}: {api_key_env} required");
+            }
+
+            for ev in &env_vars {
+                let key = meta
+                    .config_keys
+                    .iter()
+                    .find(|k| k.name == ev.name)
+                    .unwrap_or_else(|| panic!("{id} should expose {} config key", ev.name));
+                assert_eq!(key.required, ev.required, "{id}: {} required", ev.name);
+                assert_eq!(key.secret, ev.secret, "{id}: {} secret", ev.name);
+            }
+        }
+    }
+
+    #[test]
     fn test_custom_openai_provider_missing_preserves_thinking_defaults_true() {
         let json = r#"{
             "name": "custom_reasoning",
