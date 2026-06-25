@@ -16,7 +16,7 @@ use super::mcp_client::GooseMcpHostInfo;
 use super::platform_tools;
 use super::tool_confirmation_router::ToolConfirmationRouter;
 use super::tool_execution::{ToolCallResult, CHAT_MODE_TOOL_SKIPPED_RESPONSE, DECLINED_RESPONSE};
-use crate::action_required_manager::{ActionRequiredManager, ElicitationOutcome};
+use crate::action_required_manager::ElicitationOutcome;
 use crate::agents::extension::{ExtensionConfig, ExtensionResult, ToolInfo};
 use crate::agents::extension_manager::{
     get_parameter_names, ExtensionManager, ExtensionManagerCapabilities,
@@ -68,6 +68,7 @@ use tracing::{debug, error, info, instrument, warn};
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
 const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
+const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +275,7 @@ impl Default for Agent {
 }
 
 pub enum ToolStreamItem<T> {
+    ActionRequired(Message),
     Message(ServerNotification),
     Result(T),
 }
@@ -285,17 +287,22 @@ pub type ToolStream =
 // final result of the tool call. MCP notifications are not request-scoped, but
 // this lets us capture all notifications emitted during the tool call for
 // simpler consumption
-pub fn tool_stream<S, F>(rx: S, done: F) -> ToolStream
+pub fn tool_stream<S, A, F>(rx: S, action_required_rx: A, done: F) -> ToolStream
 where
     S: Stream<Item = ServerNotification> + Send + Unpin + 'static,
+    A: Stream<Item = Message> + Send + Unpin + 'static,
     F: Future<Output = ToolResult<CallToolResult>> + Send + 'static,
 {
     Box::pin(async_stream::stream! {
         tokio::pin!(done);
         let mut rx = rx;
+        let mut action_required_rx = action_required_rx;
 
         loop {
             tokio::select! {
+                Some(msg) = action_required_rx.next() => {
+                    yield ToolStreamItem::ActionRequired(msg);
+                }
                 Some(msg) = rx.next() => {
                     yield ToolStreamItem::Message(msg);
                 }
@@ -416,6 +423,39 @@ impl Agent {
         self.hook_manager
             .emit(event, crate::hooks::HookContext::new(event, session_id))
             .await;
+    }
+
+    fn stop_hook_context(
+        session_id: &str,
+        last_assistant_message: &str,
+    ) -> crate::hooks::HookContext {
+        crate::hooks::HookContext::new(crate::hooks::HookEvent::Stop, session_id)
+            .with_last_assistant_message(last_assistant_message.to_string())
+    }
+
+    async fn emit_stop_hook(&self, session_id: &str, last_assistant_message: &str) {
+        if !self.hook_manager.has_hooks(crate::hooks::HookEvent::Stop) {
+            return;
+        }
+        self.hook_manager
+            .emit(
+                crate::hooks::HookEvent::Stop,
+                Self::stop_hook_context(session_id, last_assistant_message),
+            )
+            .await;
+    }
+
+    async fn emit_stop_hook_blocking(
+        &self,
+        session_id: &str,
+        last_assistant_message: &str,
+    ) -> crate::hooks::HookDecision {
+        self.hook_manager
+            .emit_blocking(
+                crate::hooks::HookEvent::Stop,
+                Self::stop_hook_context(session_id, last_assistant_message),
+            )
+            .await
     }
 
     pub async fn steer(&self, session_id: &str, message: Message) {
@@ -572,6 +612,7 @@ impl Agent {
 
         ToolCallResult {
             notification_stream: result.notification_stream,
+            action_required_stream: result.action_required_stream,
             result: Box::new(fut.boxed()),
         }
     }
@@ -645,24 +686,6 @@ impl Agent {
             | RetryResult::SuccessChecksPassed => Ok(false),
         }
     }
-    async fn drain_elicitation_messages(&self, session_id: &str) -> Vec<Message> {
-        let mut messages = Vec::new();
-        let manager = self.config.session_manager.clone();
-        for mut elicitation_message in ActionRequiredManager::global()
-            .drain_requests_for_session(session_id)
-            .await
-        {
-            if elicitation_message.id.is_none() {
-                elicitation_message = elicitation_message.with_generated_id();
-            }
-            if let Err(e) = manager.add_message(session_id, &elicitation_message).await {
-                warn!("Failed to save elicitation message to session: {}", e);
-            }
-            messages.push(elicitation_message);
-        }
-        messages
-    }
-
     async fn load_project_instructions(&self, session: &Session) -> Option<String> {
         let project_id = session.project_id.as_deref()?;
         let entry = crate::sources::read_project(project_id).ok()?;
@@ -783,11 +806,16 @@ impl Agent {
                             result
                                 .notification_stream
                                 .unwrap_or_else(|| Box::new(stream::empty())),
+                            result
+                                .action_required_stream
+                                .unwrap_or_else(|| Box::new(stream::empty())),
                             result.result,
                         ),
-                        Err(e) => {
-                            tool_stream(Box::new(stream::empty()), futures::future::ready(Err(e)))
-                        }
+                        Err(e) => tool_stream(
+                            Box::new(stream::empty()),
+                            Box::new(stream::empty()),
+                            futures::future::ready(Err(e)),
+                        ),
                     },
                 ));
             }
@@ -1889,18 +1917,14 @@ impl Agent {
                     guard.as_mut().and_then(|fot| fot.final_output.take())
                 };
                 if let Some(output) = final_output {
+                    last_assistant_text = output.clone();
                     let message = Message::assistant().with_text(output);
                     yield AgentEvent::Message(message.clone());
                     session_manager.add_message(&session_config.id, &message).await?;
                     conversation.push(message);
 
-                    let ctx = crate::hooks::HookContext::new(
-                        crate::hooks::HookEvent::Stop,
-                        &session_config.id,
-                    );
                     match self
-                        .hook_manager
-                        .emit_blocking(crate::hooks::HookEvent::Stop, ctx)
+                        .emit_stop_hook_blocking(&session_config.id, &last_assistant_text)
                         .await
                     {
                         crate::hooks::HookDecision::Allow => {
@@ -1932,11 +1956,8 @@ impl Agent {
                     turns_taken += 1;
                 }
                 if turns_taken > max_turns {
-                    yield AgentEvent::Message(
-                        Message::assistant().with_text(
-                            "I've reached the maximum number of actions I can do without user input. Would you like me to continue?"
-                        )
-                    );
+                    last_assistant_text = MAX_TURNS_MESSAGE.to_string();
+                    yield AgentEvent::Message(Message::assistant().with_text(last_assistant_text.clone()));
                     break;
                 }
 
@@ -1957,6 +1978,7 @@ impl Agent {
                     &tools,
                     &toolshim_tools,
                 ).await?;
+                last_assistant_text.clear();
 
                 let current_turn_tool_count = conversation.messages().iter()
                     .flat_map(|m| m.content.iter())
@@ -2044,7 +2066,7 @@ impl Agent {
                                 if num_tool_requests == 0 {
                                     let text = filtered_response.as_concat_text();
                                     if !text.is_empty() {
-                                        last_assistant_text = text;
+                                        last_assistant_text.push_str(&text);
                                     }
                                     messages_to_add.push(response);
                                     continue;
@@ -2152,10 +2174,6 @@ impl Agent {
                                             break;
                                         }
 
-                                        for msg in self.drain_elicitation_messages(&session_config.id).await {
-                                            yield AgentEvent::Message(msg);
-                                        }
-
                                         tokio::select! {
                                             biased;
 
@@ -2163,6 +2181,15 @@ impl Agent {
                                                 match tool_item {
                                                     Some((request_id, item)) => {
                                                         match item {
+                                                            ToolStreamItem::ActionRequired(mut msg) => {
+                                                                if msg.id.is_none() {
+                                                                    msg = msg.with_generated_id();
+                                                                }
+                                                                if let Err(e) = session_manager.add_message(&session_config.id, &msg).await {
+                                                                    warn!("Failed to save elicitation message to session: {}", e);
+                                                                }
+                                                                yield AgentEvent::Message(msg);
+                                                            }
                                                             ToolStreamItem::Result(output) => {
                                                                 if let Ok(ref call_result) = output {
                                                                     if let Some(ref meta) = call_result.meta {
@@ -2200,15 +2227,8 @@ impl Agent {
                                                 }
                                             }
 
-                                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                                                // Continue loop to drain elicitation messages
-                                            }
+                                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
                                         }
-                                    }
-
-                                    // check for remaining elicitation messages after all tools complete
-                                    for msg in self.drain_elicitation_messages(&session_config.id).await {
-                                        yield AgentEvent::Message(msg);
                                     }
 
                                     if all_install_successful && !enable_extension_request_ids.is_empty() {
@@ -2219,37 +2239,70 @@ impl Agent {
                                     }
                                 }
 
-                                // Preserve thinking/reasoning content from the original response
-                                // Gemini (and other thinking models) require thinking to be echoed back
-                                // Kimi/DeepSeek require reasoning_content on assistant tool call messages
-                                let thinking_content: Vec<MessageContent> = response.content.iter()
-                                    .filter(|c| matches!(c, MessageContent::Thinking(_)))
+                                // Preserve thinking/reasoning content from the original response.
+                                // Gemini (and other thinking models) require thinking to be echoed back.
+                                // Kimi/DeepSeek require reasoning_content on assistant tool call messages.
+                                let direct_thinking: Vec<MessageContent> = response
+                                    .content
+                                    .iter()
+                                    .filter(|c| {
+                                        matches!(
+                                            c,
+                                            MessageContent::Thinking(_)
+                                                | MessageContent::RedactedThinking(_)
+                                        )
+                                    })
                                     .cloned()
                                     .collect();
-                                if !thinking_content.is_empty() {
+                                if !direct_thinking.is_empty() {
                                     let thinking_msg = Message::new(
                                         response.role.clone(),
                                         response.created,
-                                        thinking_content,
-                                    ).with_id(format!("msg_{}", Uuid::new_v4()));
+                                        direct_thinking.clone(),
+                                    )
+                                    .with_id(format!("msg_{}", Uuid::new_v4()));
                                     messages_to_add.push(thinking_msg);
                                 }
-
-                                // Collect reasoning content to attach to tool request messages
-                                let reasoning_content: Vec<MessageContent> = response.content.iter()
-                                    .filter(|c| matches!(c, MessageContent::Thinking(_)))
-                                    .cloned()
-                                    .collect();
+                                // When thinking arrived in an earlier stream chunk (stored as a
+                                // thinking-only message) and this chunk has only tool calls,
+                                // reuse that thinking so each split request_msg carries it.
+                                let response_thinking = if direct_thinking.is_empty() {
+                                    messages_to_add
+                                        .messages()
+                                        .iter()
+                                        .rev()
+                                        .find(|m| {
+                                            m.role == response.role
+                                                && !m.content.is_empty()
+                                                && m.content.iter().all(|c| {
+                                                    matches!(
+                                                        c,
+                                                        MessageContent::Thinking(_)
+                                                            | MessageContent::RedactedThinking(_)
+                                                    )
+                                                })
+                                        })
+                                        .map(|m| m.content.clone())
+                                        .unwrap_or_default()
+                                } else {
+                                    direct_thinking
+                                };
 
                                 for request in frontend_requests.iter().chain(remaining_requests.iter()) {
-                                    if request.tool_call.is_ok() {
+                                    if let Err(err) = &request.tool_call {
+                                        let err_msg = err.message.to_string();
+                                        error!("Tool call could not be parsed: {}", err_msg);
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(err_msg)
+                                        );
+                                        exit_chat = true;
+                                        break;
+                                    } else {
                                         let mut request_msg = Message::assistant()
                                             .with_id(format!("msg_{}", Uuid::new_v4()));
 
-                                        // Providers like Kimi require reasoning_content on all assistant
-                                        // messages with tool_calls when thinking mode is enabled.
-                                        for rc in &reasoning_content {
-                                            request_msg = request_msg.with_content(rc.clone());
+                                        for thinking in &response_thinking {
+                                            request_msg = request_msg.with_content(thinking.clone());
                                         }
 
                                         request_msg = request_msg
@@ -2269,18 +2322,6 @@ impl Agent {
                                         messages_to_add.push(request_msg);
                                         yield AgentEvent::Message(final_response.clone());
                                         messages_to_add.push(final_response);
-                                    } else {
-                                        error!(
-                                            "Tool call could not be parsed: {}",
-                                            request.tool_call.as_ref().unwrap_err(),
-                                        );
-                                        yield AgentEvent::Message(
-                                            Message::assistant().with_text(
-                                                "A tool call could not be parsed — the response may have been truncated. Try breaking the task into smaller steps or resending your message."
-                                            )
-                                        );
-                                        exit_chat = true;
-                                        break;
                                     }
                                 }
 
@@ -2557,6 +2598,7 @@ impl Agent {
                 }
 
                 if let Some(output) = pending_final_output.take() {
+                    last_assistant_text = output.clone();
                     let message = Message::assistant().with_text(output);
                     messages_to_add.push(message.clone());
                     yield AgentEvent::Message(message);
@@ -2582,13 +2624,8 @@ impl Agent {
                 }
 
                 if exit_chat {
-                    let ctx = crate::hooks::HookContext::new(
-                        crate::hooks::HookEvent::Stop,
-                        &session_config.id,
-                    );
                     match self
-                        .hook_manager
-                        .emit_blocking(crate::hooks::HookEvent::Stop, ctx)
+                        .emit_stop_hook_blocking(&session_config.id, &last_assistant_text)
                         .await
                     {
                         crate::hooks::HookDecision::Allow => {
@@ -2621,7 +2658,7 @@ impl Agent {
             }
 
             if !stop_hook_handled_for_exit {
-                self.emit_hook(crate::hooks::HookEvent::Stop, &session_config.id).await;
+                self.emit_stop_hook(&session_config.id, &last_assistant_text).await;
             }
         }.instrument(reply_stream_span));
         Ok(inner)
@@ -3350,9 +3387,15 @@ fi
 exit 0
 "#;
 
+    const RECORD_PAYLOAD_SCRIPT: &str = r#"#!/bin/sh
+cat > "$PLUGIN_ROOT/payload.json"
+exit 0
+"#;
+
     struct StopHookTestEnv {
         temp_dir: TempDir,
         hook_log: PathBuf,
+        payload_path: PathBuf,
     }
 
     impl StopHookTestEnv {
@@ -3380,6 +3423,7 @@ exit 0
             Ok(Self {
                 temp_dir,
                 hook_log: plugin_dir.join("hook.log"),
+                payload_path: plugin_dir.join("payload.json"),
             })
         }
 
@@ -3400,6 +3444,11 @@ exit 0
                 .unwrap_or_default()
                 .lines()
                 .count()
+        }
+
+        fn stop_payload(&self) -> Result<Value> {
+            let payload = std::fs::read_to_string(&self.payload_path)?;
+            Ok(serde_json::from_str(&payload)?)
         }
     }
 
@@ -3437,6 +3486,33 @@ exit 0
 
         fn get_name(&self) -> &str {
             "counting-text"
+        }
+    }
+
+    struct ChunkedTextProvider;
+
+    #[async_trait::async_trait]
+    impl crate::providers::base::Provider for ChunkedTextProvider {
+        async fn stream(
+            &self,
+            _model_config: &goose_providers::model::ModelConfig,
+            _session_id: &str,
+            _system_prompt: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let usage = ProviderUsage::new("mock-model".to_string(), Usage::default());
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok((Some(Message::assistant().with_text("streamed ")), None)),
+                Ok((
+                    Some(Message::assistant().with_text("assistant reply")),
+                    Some(usage),
+                )),
+            ])))
+        }
+
+        fn get_name(&self) -> &str {
+            "chunked-text"
         }
     }
 
@@ -3653,6 +3729,34 @@ exit 0
                 .any(|text| text.contains("overriding and ending turn")),
             "non-consecutive Stop hook blocks should not trip the cap warning"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_hook_payload_includes_streamed_assistant_reply_text() -> Result<()> {
+        let env = StopHookTestEnv::new(RECORD_PAYLOAD_SCRIPT)?;
+        let provider = Arc::new(ChunkedTextProvider);
+        let (agent, session_id) =
+            create_test_agent(env.data_dir(), env.hook_manager(), provider).await?;
+
+        let messages = run_stop_hook_test_turn(&agent, &session_id, "hello").await?;
+        let texts = visible_texts(&messages);
+        assert_eq!(texts.join(""), "streamed assistant reply");
+
+        let payload = env.stop_payload()?;
+        assert_eq!(payload.get("event").and_then(Value::as_str), Some("Stop"));
+        assert_eq!(
+            payload.get("session_id").and_then(Value::as_str),
+            Some(session_id.as_str())
+        );
+        assert_eq!(
+            payload
+                .get("last_assistant_message")
+                .and_then(Value::as_str),
+            Some("streamed assistant reply")
+        );
+        assert!(payload.get("message").is_none());
 
         Ok(())
     }
